@@ -1,0 +1,296 @@
+openapi: 3.0.0
+info:
+  title: API de Gestão de Médicos e Pacientes
+  version: 1.0.0
+  description: API RESTful para gerenciar médicos, pacientes e envio automatizado de formulários.
+servers:
+  - url: http://localhost:5000/api
+paths:
+  /doctors/register:
+    post:
+      tags: [Médicos]
+      summary: Registar novo médico
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              required: [name, email, password]
+              properties:
+                name: { type: string }
+                email: { type: string }
+                password: { type: string }
+      responses:
+        '201': { description: Médico criado }
+        '400': { description: Email já em uso }
+
+  /doctors/login:
+    post:
+      tags: [Médicos]
+      summary: Login de médico
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              required: [email, password]
+              properties:
+                email: { type: string }
+                password: { type: string }
+      responses:
+        '200': { description: Token JWT retornado }
+        '400': { description: Credenciais inválidas }
+
+  /doctors/profile:
+    get:
+      tags: [Médicos]
+      summary: Perfil do médico autenticado
+      security:
+        - bearerAuth: []
+      responses:
+        '200': { description: Dados do médico }
+        '401': { description: Token ausente ou inválido }
+
+  /doctors/{id}:
+    put:
+      tags: [Médicos]
+      summary: Atualiza dados do médico
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      security: [ bearerAuth: [] ]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                name: { type: string }
+                email: { type: string }
+                password: { type: string }
+      responses:
+        '200': { description: Atualizado com sucesso }
+        '404': { description: Médico não encontrado }
+
+    delete:
+      tags: [Médicos]
+      summary: Deleta médico
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      security: [ bearerAuth: [] ]
+      responses:
+        '200': { description: Deletado com sucesso }
+        '404': { description: Não encontrado }
+
+  /patients:
+    post:
+      tags: [Pacientes]
+      summary: Cria novo paciente e agenda formulário
+      security: [ bearerAuth: [] ]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              required: [name, dateOfBirth, gender, doctors, email]
+              properties:
+                name: { type: string }
+                email: { type: string }
+                gender: { type: string, enum: [M, F, O] }
+                dateOfBirth: { type: string, format: date }
+                surgeryDate: { type: string, format: date }
+                doctors:
+                  type: array
+                  items: { type: string }
+      responses:
+        '201': { description: Paciente criado }
+        '400': { description: Dados inválidos }
+
+    get:
+      tags: [Pacientes]
+      summary: Lista todos os pacientes do médico autenticado
+      security: [ bearerAuth: [] ]
+      responses:
+        '200': { description: Lista de pacientes }
+
+  /patients/{id}:
+    get:
+      tags: [Pacientes]
+      summary: Detalhes de paciente
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Dados do paciente }
+        '404': { description: Não encontrado }
+
+    put:
+      tags: [Pacientes]
+      summary: Atualiza paciente
+      security: [ bearerAuth: [] ]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                name: { type: string }
+                dateOfBirth: { type: string }
+                gender: { type: string }
+                surgeryDate: { type: string }
+                email: { type: string }
+                doctors:
+                  type: array
+                  items: { type: string }
+      responses:
+        '200': { description: Atualizado }
+        '404': { description: Paciente não encontrado }
+
+    delete:
+      tags: [Pacientes]
+      summary: Deleta paciente
+      security: [ bearerAuth: [] ]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Removido }
+
+  /patients/{id}/questionnaires:
+    post:
+      tags: [Questionários]
+      summary: Adiciona questionário ao paciente
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              required: [formId, answers]
+              properties:
+                formId: { type: string }
+                dateFilled: { type: string }
+                answers:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      questionId: { type: string }
+                      answer: { type: string }
+      responses:
+        '201': { description: Questionário criado }
+
+    get:
+      tags: [Questionários]
+      summary: Lista questionários do paciente
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Lista retornada }
+
+  /patients/{id}/questionnaires/{questionnaireId}:
+    get:
+      tags: [Questionários]
+      summary: Detalhes do questionário
+      parameters:
+        - name: id
+          in: path
+          required: true
+        - name: questionnaireId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Detalhes retornados }
+
+    put:
+      tags: [Questionários]
+      summary: Atualiza questionário
+      parameters:
+        - name: id
+          in: path
+          required: true
+        - name: questionnaireId
+          in: path
+          required: true
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                answers: { type: array }
+      responses:
+        '200': { description: Atualizado }
+
+    delete:
+      tags: [Questionários]
+      summary: Remove questionário
+      parameters:
+        - name: id
+          in: path
+          required: true
+        - name: questionnaireId
+          in: path
+          required: true
+      responses:
+        '200': { description: Removido }
+
+  /patients/{patientId}/form-status:
+    get:
+      tags: [Formulário EQ5]
+      summary: Verifica status de formulário ativo
+      parameters:
+        - name: patientId
+          in: path
+          required: true
+      responses:
+        '200': { description: Formulário ativo }
+        '400': { description: Expirado ou preenchido }
+
+  /patients/{patientId}/submit-form:
+    post:
+      tags: [Formulário EQ5]
+      summary: Submete formulário EQ5
+      parameters:
+        - name: patientId
+          in: path
+          required: true
+      requestBody:
+        content:
+          application/json:
+            schema:
+              required: [answers]
+              properties:
+                answers:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      questionId: { type: string }
+                      answer: { type: string }
+      responses:
+        '200': { description: Submetido }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
