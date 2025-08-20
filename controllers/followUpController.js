@@ -232,6 +232,7 @@ exports.checkFormStatus = async (req, res) => {
 
 
 // Submeter questionário preenchido
+
 exports.submitQuestionnaire = async (req, res) => {
   try {
     const { questionnaireId } = req.params;
@@ -241,18 +242,32 @@ exports.submitQuestionnaire = async (req, res) => {
     if (!questionnaire) {
       return res.status(404).json({ message: 'Questionário não encontrado neste acompanhamento.' });
     }
-
     if (questionnaire.filled) {
       return res.status(400).json({ message: 'Este questionário já foi preenchido.' });
     }
 
-    const expiration = new Date(questionnaire.sentAt || questionnaire.createdAt);
-    expiration.setDate(expiration.getDate() + 14);
+    const base = new Date(questionnaire.sentAt || questionnaire.createdAt || new Date());
+    const expiration = new Date(base.getTime() + 14 * 24 * 60 * 60 * 1000);
     if (new Date() > expiration) {
       return res.status(400).json({ message: 'O questionário expirou.' });
     }
 
-    questionnaire.answers = answers;
+    // 👇 Normaliza e preserva o score
+    const normalized = (answers || []).map(a => ({
+      question: a.question,
+      answer: a.answer,
+      conditionalLabel: a.conditionalLabel ?? null,
+      additional: a.additional ?? null,
+      score: typeof a.score === 'number'
+        ? a.score
+        : (a.score != null ? Number(a.score) : undefined)
+    }));
+
+    questionnaire.answers = normalized;
+
+    // 👇 (Opcional) total por questionário
+    questionnaire.totalScore = normalized.reduce((sum, a) => sum + (a.score ?? 0), 0);
+
     questionnaire.dateFilled = new Date();
     questionnaire.filled = true;
 
@@ -265,6 +280,7 @@ exports.submitQuestionnaire = async (req, res) => {
     return res.status(500).json({ message: 'Erro interno no servidor.' });
   }
 };
+
 
 
 
