@@ -24,6 +24,7 @@ router.get('/surgery-types', auth, ctrl.getAllSurgeryTypes);
 router.get('/by-slug/:slug', ctrl.getBySlug);
 router.get('/verify/:patientId/:followUpId/:questionnaireId', ctrl.verifyQuestionnaire);
 router.post('/:patientId/:followUpId/:questionnaireId/submit-form', ctrl.submitQuestionnaire);
+router.get('/questionnaires/critical', ctrl.getCritical);
 
 
 // CRUD protegido
@@ -42,7 +43,6 @@ router.delete('/:patientId/:followUpId/questionnaires/:id',   auth, ctrl.deleteQ
 // enviar/manual/reminder
 router.post('/:patientId/:followUpId/send-form/:formId',      auth, ctrl.sendFormToPatient);
 
-router.get('/questionnaires/critical', ctrl.getCritical);
 
 
 module.exports = router;
