@@ -19,6 +19,10 @@ const questionnaireSchema = new mongoose.Schema({
   attempts:    { type: Number, default: 0 },
   dateFilled:  { type: Date },
   estado:      { type: String, enum: ['ativo', 'expirado'], default: 'ativo' },
+    metrics: {
+    scoreAvg: { type: Number, default: null } // 1..3 (média das respostas com score)
+  },
+  verified:   { type: Boolean, default: null },
   answers:     [answerSchema]           // 👈 usa o schema com score
 });
 
