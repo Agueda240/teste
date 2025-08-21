@@ -440,3 +440,25 @@ exports.getFollowUpDocumentById = async (followUpId) => {
 
 
 
+exports.getCritical = async (req, res, next) => {
+  try {
+    // podes tornar o limiar configurável: ?maxAvg=2
+    const maxAvg = req.query.maxAvg ? Number(req.query.maxAvg) : 2;
+    const onlyUnverified = req.query.onlyUnverified !== 'false'; // default: true
+
+    const filter = {
+      filled: true,
+      ...(onlyUnverified ? { verified: false } : {}),
+      'metrics.scoreAvg': { $ne: null, $lt: maxAvg } // só médias < 2 (por default)
+    };
+
+    const docs = await Questionnaire.find(filter)
+      .select('patientId patientName formId scheduledAt metrics.scoreAvg verified')
+      .sort({ 'metrics.scoreAvg': 1 }) // piores primeiro
+      .lean();
+
+    res.json(docs);
+  } catch (err) {
+    next(err);
+  }
+};
