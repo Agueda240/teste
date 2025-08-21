@@ -440,25 +440,49 @@ exports.getFollowUpDocumentById = async (followUpId) => {
 
 
 
-exports.getCritical = async (req, res, next) => {
+// controllers/followUpController.js
+exports.getCritical = async (req, res) => {
   try {
-    // podes tornar o limiar configurável: ?maxAvg=2
-    const maxAvg = req.query.maxAvg ? Number(req.query.maxAvg) : 2;
-    const onlyUnverified = req.query.onlyUnverified !== 'false'; // default: true
+    const maxAvg = req.query.maxAvg ? Number(req.query.maxAvg) : 2;          // limiar (default <2)
+    const onlyUnverified = req.query.onlyUnverified !== 'false';             // default: só não verificados
 
-    const filter = {
-      filled: true,
-      ...(onlyUnverified ? { verified: false } : {}),
-      'metrics.scoreAvg': { $ne: null, $lt: maxAvg } // só médias < 2 (por default)
-    };
+    const pipeline = [
+      { $unwind: '$questionnaires' },
+      { $match: {
+          'questionnaires.filled': true,
+          'questionnaires.metrics.scoreAvg': { $ne: null, $lt: maxAvg },
+          ...(onlyUnverified ? { 'questionnaires.verified': false } : {})
+        }
+      },
+      // junta info do paciente (ajusta o nome da coleção se for diferente)
+      { $lookup: {
+          from: 'patients',
+          localField: 'patient',
+          foreignField: '_id',
+          as: 'p'
+        }
+      },
+      { $unwind: { path: '$p', preserveNullAndEmptyArrays: true } },
+      { $project: {
+          _id: 0,
+          followUpId: '$_id',
+          questionnaireId: '$questionnaires._id',
+          patientId: '$patient',
+          patientName: '$p.name',
+          formId: '$questionnaires.formId',
+          scheduledAt: '$questionnaires.scheduledAt',
+          scoreAvg: '$questionnaires.metrics.scoreAvg',
+          verified: '$questionnaires.verified'
+        }
+      },
+      { $sort: { scoreAvg: 1, scheduledAt: 1 } } // piores primeiro
+    ];
 
-    const docs = await Questionnaire.find(filter)
-      .select('patientId patientName formId scheduledAt metrics.scoreAvg verified')
-      .sort({ 'metrics.scoreAvg': 1 }) // piores primeiro
-      .lean();
-
-    res.json(docs);
+    const rows = await require('../Models/FollowUp').aggregate(pipeline).exec();
+    return res.json(rows);
   } catch (err) {
-    next(err);
+    console.error('getCritical ⇢', err);
+    return res.status(500).json({ message: 'Erro ao listar questionários críticos', error: err.message });
   }
 };
+
