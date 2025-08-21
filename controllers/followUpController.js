@@ -230,6 +230,32 @@ exports.checkFormStatus = async (req, res) => {
   }
 };
 
+/**
+ * @typedef {{ score?: number|null }} Answer
+ */
+
+/**
+ * Calcula a média dos scores (1..3) e o "verified"
+ * @param {Answer[]} answers
+ * @returns {{ scoreAvg: number|null, verified: boolean|null }}
+ */
+function computeAvgAndVerified(answers) {
+  const scored = (answers || [])
+    .map(a => (a && Number.isFinite(a.score) ? Number(a.score) : null))
+    .filter(s => s !== null && s >= 1 && s <= 3);
+
+  if (!scored.length) return { scoreAvg: null, verified: null };
+
+  const sum = scored.reduce((acc, n) => acc + n, 0);
+  const scoreAvg = sum / scored.length;
+
+  const rounded = Math.max(1, Math.min(3, Math.round(scoreAvg)));
+  const verified = rounded !== 1; // false se preocupante (1), true se médio/bom (2/3)
+
+  return { scoreAvg, verified };
+}
+
+
 
 // Submeter questionário preenchido
 
@@ -252,21 +278,29 @@ exports.submitQuestionnaire = async (req, res) => {
       return res.status(400).json({ message: 'O questionário expirou.' });
     }
 
-    // 👇 Normaliza e preserva o score
+    // normaliza e força score numérico quando existir
     const normalized = (answers || []).map(a => ({
-      question: a.question,
-      answer: a.answer,
-      conditionalLabel: a.conditionalLabel ?? null,
-      additional: a.additional ?? null,
-      score: typeof a.score === 'number'
-        ? a.score
-        : (a.score != null ? Number(a.score) : undefined)
+      question: a?.question,
+      answer: a?.answer,
+      conditionalLabel: a?.conditionalLabel ?? null,
+      additional: a?.additional ?? null,
+      score: a?.score == null ? undefined : Number(a.score)
     }));
 
-    questionnaire.answers = normalized;
+    // calcula média e verified
+    const { scoreAvg, verified } = computeAvgAndVerified(normalized);
 
-    // 👇 (Opcional) total por questionário
-    questionnaire.totalScore = normalized.reduce((sum, a) => sum + (a.score ?? 0), 0);
+    questionnaire.answers = normalized;
+    questionnaire.totalScore = normalized
+      .map(a => a.score)
+      .filter(s => Number.isFinite(s))
+      .reduce((sum, s) => sum + s, 0);
+
+    questionnaire.metrics = questionnaire.metrics || {};
+    questionnaire.metrics.scoreAvg = scoreAvg;
+
+    questionnaire.verified = verified;
+    questionnaire.verifiedAt = verified === null ? null : new Date();
 
     questionnaire.dateFilled = new Date();
     questionnaire.filled = true;
@@ -274,12 +308,18 @@ exports.submitQuestionnaire = async (req, res) => {
     req.followUp.markModified('questionnaires');
     await req.followUp.save();
 
-    return res.status(200).json({ message: 'Formulário preenchido com sucesso.' });
+    return res.status(200).json({
+      message: 'Formulário preenchido com sucesso.',
+      metrics: { scoreAvg },
+      verified
+    });
   } catch (error) {
     console.error('submitQuestionnaire ⇢', error);
     return res.status(500).json({ message: 'Erro interno no servidor.' });
   }
 };
+
+
 
 
 
