@@ -42,6 +42,7 @@ router.delete('/:patientId/:followUpId/questionnaires/:id',   auth, ctrl.deleteQ
 // enviar/manual/reminder
 router.post('/:patientId/:followUpId/send-form/:formId',      auth, ctrl.sendFormToPatient);
 
+router.get('/questionnaires/critical', QuestionnaireController.getCritical);
 
 
 module.exports = router;
