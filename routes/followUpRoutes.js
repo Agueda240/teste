@@ -25,7 +25,7 @@ router.get('/by-slug/:slug', ctrl.getBySlug);
 router.get('/verify/:patientId/:followUpId/:questionnaireId', ctrl.verifyQuestionnaire);
 router.post('/:patientId/:followUpId/:questionnaireId/submit-form', ctrl.submitQuestionnaire);
 router.get('/questionnaires/critical', ctrl.getCritical);
-
+router.patch('/:patientId/:followUpId/questionnaires/:questionnaireId/verify', auth, ctrl.markQuestionnaireVerified);
 
 // CRUD protegido
 router.post('/:patientId',                       auth, ctrl.createFollowUp);
