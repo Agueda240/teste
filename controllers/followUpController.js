@@ -440,48 +440,67 @@ exports.getFollowUpDocumentById = async (followUpId) => {
 
 
 // controllers/followUpController.js
-exports.getCritical = async (req, res) => {
+exports.getCritical = async (req, res, next) => {
   try {
-    const maxAvg = req.query.maxAvg ? Number(req.query.maxAvg) : 2;          // limiar (default <2)
-    const onlyUnverified = req.query.onlyUnverified !== 'false';             // default: só não verificados
+    const maxAvg = req.query.maxAvg ? Number(req.query.maxAvg) : 2;          // < 2
+    const onlyUnverified = req.query.onlyUnverified !== 'false';            // default: true
 
-    const pipeline = [
-      { $unwind: '$questionnaires' },
-      { $match: {
-          'questionnaires.filled': true,
-          'questionnaires.metrics.scoreAvg': { $ne: null, $lt: maxAvg },
-          ...(onlyUnverified ? { 'questionnaires.verified': false } : {})
-        }
-      },
-      // junta info do paciente (ajusta o nome da coleção se for diferente)
-      { $lookup: {
-          from: 'patients',
-          localField: 'patient',
-          foreignField: '_id',
-          as: 'p'
-        }
-      },
-      { $unwind: { path: '$p', preserveNullAndEmptyArrays: true } },
-      { $project: {
-          _id: 0,
-          followUpId: '$_id',
-          questionnaireId: '$questionnaires._id',
-          patientId: '$patient',
-          patientName: '$p.name',
-          formId: '$questionnaires.formId',
-          scheduledAt: '$questionnaires.scheduledAt',
-          scoreAvg: '$questionnaires.metrics.scoreAvg',
-          verified: '$questionnaires.verified'
-        }
-      },
-      { $sort: { scoreAvg: 1, scheduledAt: 1 } } // piores primeiro
-    ];
+    // carrega followups com patient e doctor; depois “achata” os questionários
+    const followups = await FollowUp
+      .find({})
+      .populate('patient')
+      .populate('doctor')
+      .lean();
 
-    const rows = await require('../Models/FollowUp').aggregate(pipeline).exec();
-    return res.json(rows);
+    const now = Date.now();
+    const out = [];
+
+    for (const fu of followups) {
+      for (const q of fu.questionnaires || []) {
+        const avg = q?.metrics?.scoreAvg ?? null;
+        if (avg == null || avg >= maxAvg) continue;
+        if (onlyUnverified && q.verified === true) continue;
+        if (!q.filled) continue; // só interessa já preenchido
+
+        // calcula estado (ativo/expirado) com base em 14 dias após o envio
+        const base = q.sentAt ? new Date(q.sentAt).getTime()
+                              : (q.createdAt ? new Date(q.createdAt).getTime() : null);
+        let estado = 'ativo';
+        if (base != null) {
+          const expiry = base + 14 * 24 * 60 * 60 * 1000;
+          estado = now > expiry ? 'expirado' : 'ativo';
+        }
+
+        out.push({
+          // shape do teu Questionnaire + patient + doctor
+          formId: q.formId,
+          sentAt: q.sentAt ?? null,
+          updatedAt: q.updatedAt ?? null,
+          filled: !!q.filled,
+          attempts: q.attempts ?? 0,
+          dateFilled: q.dateFilled ?? null,
+          estado,
+          answers: q.answers ?? [],
+          verified: q.verified ?? null,
+          metrics: { scoreAvg: avg },
+
+          // anexos
+          patient: fu.patient || null,
+          doctor: fu.doctor || null,
+
+          // úteis para ações no front
+          followUpId: fu._id,
+          questionnaireId: q._id
+        });
+      }
+    }
+
+    // ordenar piores primeiro
+    out.sort((a, b) => (a.metrics.scoreAvg ?? 99) - (b.metrics.scoreAvg ?? 99));
+
+    return res.json(out);
   } catch (err) {
-    console.error('getCritical ⇢', err);
-    return res.status(500).json({ message: 'Erro ao listar questionários críticos', error: err.message });
+    next(err);
   }
 };
 
