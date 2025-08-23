@@ -439,7 +439,6 @@ exports.getFollowUpDocumentById = async (followUpId) => {
 
 
 
-
 // controllers/followUpController.js
 exports.getCritical = async (req, res) => {
   try {
@@ -483,6 +482,30 @@ exports.getCritical = async (req, res) => {
   } catch (err) {
     console.error('getCritical ⇢', err);
     return res.status(500).json({ message: 'Erro ao listar questionários críticos', error: err.message });
+  }
+};
+
+exports.markQuestionnaireVerified = async (req, res) => {
+  try {
+    const fu = req.followUp;
+    if (!fu) return res.status(404).json({ message: 'Acompanhamento não encontrado.' });
+
+    // Garantir que o followUp pertence ao patientId da rota
+    if (fu.patient.toString() !== req.params.patientId) {
+      return res.status(404).json({ message: 'Acompanhamento não pertence ao paciente indicado.' });
+    }
+
+    const q = fu.questionnaires.id(req.params.questionnaireId);
+    if (!q) return res.status(404).json({ message: 'Questionário não encontrado.' });
+
+    q.verified   = true;
+    q.verifiedAt = new Date();
+
+    await fu.save();
+    return res.json({ ok: true, verified: true, verifiedAt: q.verifiedAt });
+  } catch (err) {
+    console.error('markQuestionnaireVerified ⇢', err);
+    return res.status(500).json({ message: 'Erro ao verificar questionário.' });
   }
 };
 
