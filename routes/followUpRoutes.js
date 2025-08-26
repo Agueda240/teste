@@ -26,6 +26,7 @@ router.get('/verify/:patientId/:followUpId/:questionnaireId', ctrl.verifyQuestio
 router.post('/:patientId/:followUpId/:questionnaireId/submit-form', ctrl.submitQuestionnaire);
 router.get('/questionnaires/critical', ctrl.getCritical);
 router.patch('/:patientId/:followUpId/questionnaires/:questionnaireId/verify', auth, ctrl.markQuestionnaireVerified);
+router.put('/:patientId/:followUpId/discharge', auth, ctrl.setDischargeDate);
 
 // CRUD protegido
 router.post('/:patientId',                       auth, ctrl.createFollowUp);
