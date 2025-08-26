@@ -3,7 +3,11 @@ const FollowUp = require('../Models/FollowUp');
 const Patient = require('../Models/Patient');
 const { scheduleFollowUpEmails } = require('../utils/formScheduler');
 
-// Criar novo acompanhamento
+// helpers reutilizados noutros pontos (ex.: setDischargeDate)
+function addDays(date, days)   { const d = new Date(date); d.setDate(d.getDate() + days); return d; }
+function addMonths(date, m)    { const d = new Date(date); d.setMonth(d.getMonth() + m); return d; }
+function addYears(date, y)     { const d = new Date(date); d.setFullYear(d.getFullYear() + y); return d; }
+
 exports.createFollowUp = async (req, res) => {
   try {
     const { patientId } = req.params;
@@ -12,77 +16,62 @@ exports.createFollowUp = async (req, res) => {
     const patient = await Patient.findById(patientId);
     if (!patient) return res.status(404).json({ message: 'Paciente não encontrado.' });
 
-    const { nanoid } = await import('nanoid');
+    const { nanoid }        = await import('nanoid');
     const { sendFormEmail } = require('../services/emailService');
     const { scheduleFollowUpEmails } = require('../utils/formScheduler');
 
-    function addDays(date, days) {
-      const d = new Date(date);
-      d.setDate(d.getDate() + days);
-      return d;
-    }
-    function addMonths(date, months) {
-      const d = new Date(date);
-      d.setMonth(d.getMonth() + months);
-      return d;
-    }
-    function addYears(date, years) {
-      const d = new Date(date);
-      d.setFullYear(d.getFullYear() + years);
-      return d;
-    }
-
-    const surgery = new Date(surgeryDate);
     const now = new Date();
 
+    // ✅ Só PRÉ-OP com data; PÓS-OP aguardam ALTA (scheduledAt = null)
     const questionnaires = [
-      { formId: 'follow-up_preop',   scheduledAt: now,                   slug: nanoid(8) },
-      { formId: 'eq5_preop',         scheduledAt: now,                   slug: nanoid(8) },
-      { formId: 'follow-up_3dias',   scheduledAt: addDays(surgery, 3),   slug: nanoid(8) },
-      { formId: 'follow-up_1mes',    scheduledAt: addMonths(surgery, 1), slug: nanoid(8) },
-      { formId: 'follow-up_3meses',  scheduledAt: addMonths(surgery, 3), slug: nanoid(8) },
-      { formId: 'eq5_3meses',        scheduledAt: addMonths(surgery, 3), slug: nanoid(8) },
-      { formId: 'follow-up_6meses',  scheduledAt: addMonths(surgery, 6), slug: nanoid(8) },
-      { formId: 'follow-up_1ano',    scheduledAt: addYears(surgery, 1),  slug: nanoid(8) },
-      { formId: 'eq5_1ano',          scheduledAt: addYears(surgery, 1),  slug: nanoid(8) }
+      { formId: 'follow-up_preop', scheduledAt: now,  slug: nanoid(8) },
+      { formId: 'eq5_preop',       scheduledAt: now,  slug: nanoid(8) },
+
+      { formId: 'follow-up_3dias',   scheduledAt: null, slug: nanoid(8) },
+      { formId: 'follow-up_1mes',    scheduledAt: null, slug: nanoid(8) },
+      { formId: 'follow-up_3meses',  scheduledAt: null, slug: nanoid(8) },
+      { formId: 'eq5_3meses',        scheduledAt: null, slug: nanoid(8) },
+      { formId: 'follow-up_6meses',  scheduledAt: null, slug: nanoid(8) },
+      { formId: 'follow-up_1ano',    scheduledAt: null, slug: nanoid(8) },
+      { formId: 'eq5_1ano',          scheduledAt: null, slug: nanoid(8) }
     ];
 
     const followUp = new FollowUp({
       patient: patientId,
-      doctor: req.user.id,
+      doctor:  req.user.id,
       surgeryDate,
       surgeryType,
       medications,
+      dischargeDate: null,    // ← será preenchido no endpoint “Dar alta”
       questionnaires
     });
 
     await followUp.save();
 
-    // Enviar formulários agendados para hoje ou antes
-    const todayForms = followUp.questionnaires.filter(q =>
+    // ✅ Enviar apenas os que têm scheduledAt válida e <= now (pré-op)
+    const ready = followUp.questionnaires.filter(q =>
       !q.filled &&
+      q.scheduledAt instanceof Date &&
       q.scheduledAt <= now &&
       (!q.sentAt || q.sentAt < q.scheduledAt)
     );
 
-    if (todayForms.length > 0 && patient.email) {
-      const formIds = todayForms.map(q => q.formId);
-      const slugMap = Object.fromEntries(todayForms.map(q => [q.formId, q.slug]));
-
+    if (ready.length && patient.email) {
+      const formIds = ready.map(q => q.formId);
+      const slugMap = Object.fromEntries(ready.map(q => [q.formId, q.slug]));
       try {
         await sendFormEmail(patient.email, patient._id, patient.name, formIds, slugMap);
-        todayForms.forEach(q => q.sentAt = new Date());
+        ready.forEach(q => { q.sentAt = new Date(); q.attempts = (q.attempts || 0) + 1; });
         await followUp.save();
-        console.log(`📩 Email pré-operatório enviado para ${patient.email}`);
       } catch (e) {
-        console.error(`❌ Erro ao enviar email pré-operatório para ${patient.email}:`, e);
+        console.error('❌ Erro ao enviar pré-op:', e);
       }
     }
 
+    // ⚠️ Garante que o teu formScheduler NÃO altera scheduledAt dos pós-op.
     await scheduleFollowUpEmails(patient, followUp);
 
     res.status(201).json(followUp);
-
   } catch (err) {
     console.error('Erro em createFollowUp:', err);
     res.status(400).json({ message: err.message });
