@@ -532,15 +532,10 @@ exports.setDischargeDate = async (req, res) => {
   try {
     const { patientId, followUpId } = req.params;
     const { dischargeDate } = req.body;
+    if (!dischargeDate) return res.status(400).json({ message: 'dischargeDate é obrigatório' });
 
-    if (!dischargeDate) {
-      return res.status(400).json({ message: 'dischargeDate é obrigatório' });
-    }
-
-    // pode vir populado ou só com o ObjectId
     const fu = await FollowUp.findById(followUpId).populate('patient');
     const fuPatientId = fu?.patient?._id ? String(fu.patient._id) : String(fu?.patient);
-
     if (!fu || fuPatientId !== String(patientId)) {
       return res.status(404).json({ message: 'Acompanhamento não encontrado para o paciente' });
     }
@@ -550,30 +545,32 @@ exports.setDischargeDate = async (req, res) => {
 
     fu.dischargeDate = alta;
 
-    // agenda só os pós-op que ainda não têm scheduledAt
+    // agenda só os pós-op sem scheduledAt
     for (const q of fu.questionnaires || []) {
       const fn = SCHEDULE_FROM_DISCHARGE[q.formId];
       if (fn && !q.scheduledAt) q.scheduledAt = fn(alta);
     }
 
-    // envia os que já estão “a horas”
-    const now = new Date();
-    const due = (fu.questionnaires || []).filter(q =>
-      !q.filled && q.scheduledAt && q.scheduledAt <= now && !q.sentAt
-    );
-
-    if (due.length && fu.patient?.email) {
-      const { sendFormEmail } = require('../services/emailService');
-      const formIds = due.map(q => q.formId);
-      const slugMap = Object.fromEntries(due.map(q => [q.formId, q.slug]));
-      try {
-        await sendFormEmail(fu.patient.email, fu.patient._id, fu.patient.name, formIds, slugMap);
-        due.forEach(q => { q.sentAt = new Date(); q.attempts = (q.attempts || 0) + 1; });
-      } catch (e) { console.error('❌ Erro ao enviar pós-op:', e); }
-    }
-
     await fu.save();
-    return res.json(fu);
+
+    // 👉 RESPONDE JÁ
+    res.json(fu);
+
+    // 🔧 ENVIO EM BACKGROUND
+    queueMicrotask(async () => {
+      try {
+        const { sendFormEmail } = require('../services/emailService');
+        const now = new Date();
+        const due = (fu.questionnaires || []).filter(q => !q.filled && q.scheduledAt && q.scheduledAt <= now && !q.sentAt);
+        if (due.length && fu.patient?.email) {
+          const formIds = due.map(q => q.formId);
+          const slugMap = Object.fromEntries(due.map(q => [q.formId, q.slug]));
+          await sendFormEmail(fu.patient.email, fu.patient._id, fu.patient.name, formIds, slugMap);
+          due.forEach(q => { q.sentAt = new Date(); q.attempts = (q.attempts || 0) + 1; });
+          await fu.save();
+        }
+      } catch (e) { console.error('Pós-op async:', e); }
+    });
   } catch (err) {
     console.error('setDischargeDate ⇢', err);
     return res.status(500).json({ message: 'Erro ao definir alta.' });
