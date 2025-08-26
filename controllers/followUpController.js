@@ -517,6 +517,7 @@ exports.markQuestionnaireVerified = async (req, res) => {
   }
 };
 
+
 const SCHEDULE_FROM_DISCHARGE = {
   'follow-up_3dias'  : d => addDays(d, 3),
   'follow-up_1mes'   : d => addMonths(d, 1),
@@ -536,47 +537,45 @@ exports.setDischargeDate = async (req, res) => {
       return res.status(400).json({ message: 'dischargeDate é obrigatório' });
     }
 
-    const followUp = await FollowUp.findById(followUpId).populate('patient');
-    if (!followUp || followUp.patient.toString() !== patientId) {
+    // pode vir populado ou só com o ObjectId
+    const fu = await FollowUp.findById(followUpId).populate('patient');
+    const fuPatientId = fu?.patient?._id ? String(fu.patient._id) : String(fu?.patient);
+
+    if (!fu || fuPatientId !== String(patientId)) {
       return res.status(404).json({ message: 'Acompanhamento não encontrado para o paciente' });
     }
 
     const alta = new Date(dischargeDate);
     if (isNaN(+alta)) return res.status(400).json({ message: 'dischargeDate inválida' });
 
-    // guarda a alta
-    followUp.dischargeDate = alta;
+    fu.dischargeDate = alta;
 
-    // agenda apenas os pós-op que ainda não têm scheduledAt
-    for (const q of followUp.questionnaires) {
-      const f = q.formId;
-      if (SCHEDULE_FROM_DISCHARGE[f] && !q.scheduledAt) {
-        q.scheduledAt = SCHEDULE_FROM_DISCHARGE[f](alta);
-      }
+    // agenda só os pós-op que ainda não têm scheduledAt
+    for (const q of fu.questionnaires || []) {
+      const fn = SCHEDULE_FROM_DISCHARGE[q.formId];
+      if (fn && !q.scheduledAt) q.scheduledAt = fn(alta);
     }
 
-    // envia os que já estão “a horas” e ainda não foram enviados/preenchidos
+    // envia os que já estão “a horas”
     const now = new Date();
-    const due = followUp.questionnaires.filter(q =>
+    const due = (fu.questionnaires || []).filter(q =>
       !q.filled && q.scheduledAt && q.scheduledAt <= now && !q.sentAt
     );
 
-    if (due.length && followUp.patient?.email) {
+    if (due.length && fu.patient?.email) {
       const { sendFormEmail } = require('../services/emailService');
       const formIds = due.map(q => q.formId);
       const slugMap = Object.fromEntries(due.map(q => [q.formId, q.slug]));
       try {
-        await sendFormEmail(followUp.patient.email, followUp.patient._id, followUp.patient.name, formIds, slugMap);
+        await sendFormEmail(fu.patient.email, fu.patient._id, fu.patient.name, formIds, slugMap);
         due.forEach(q => { q.sentAt = new Date(); q.attempts = (q.attempts || 0) + 1; });
-      } catch (e) {
-        console.error('❌ Erro ao enviar pós-op:', e);
-      }
+      } catch (e) { console.error('❌ Erro ao enviar pós-op:', e); }
     }
 
-    await followUp.save();
-    res.json(followUp);
+    await fu.save();
+    return res.json(fu);
   } catch (err) {
     console.error('setDischargeDate ⇢', err);
-    res.status(500).json({ message: 'Erro ao definir alta.' });
+    return res.status(500).json({ message: 'Erro ao definir alta.' });
   }
 };
