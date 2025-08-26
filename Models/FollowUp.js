@@ -12,7 +12,7 @@ const answerSchema = new mongoose.Schema({
 const questionnaireSchema = new mongoose.Schema({
   formId:      { type: String, required: true },
   slug:        { type: String, unique: true, index: true, required: true },
-  scheduledAt: { type: Date, required: true },
+  scheduledAt: { type: Date, default: null },  
   sentAt:      { type: Date },
   updatedAt:   { type: Date, default: Date.now },
   filled:      { type: Boolean, default: false },
@@ -40,7 +40,9 @@ const followUpSchema = new mongoose.Schema({
   doctorAssignedAt: { type: Date, default: Date.now },
   medications: [{ type: String }],
   status: { type: String, enum: ['ativo', 'concluído', 'expirado'], default: 'ativo' },
-  questionnaires: [questionnaireSchema]
+  questionnaires: [questionnaireSchema],
+  dischargeDate: { type: Date, default: null }
+
 }, { timestamps: true });
 
 module.exports = mongoose.model('FollowUp', followUpSchema);
