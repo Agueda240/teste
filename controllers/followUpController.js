@@ -528,3 +528,66 @@ exports.markQuestionnaireVerified = async (req, res) => {
   }
 };
 
+const SCHEDULE_FROM_DISCHARGE = {
+  'follow-up_3dias'  : d => addDays(d, 3),
+  'follow-up_1mes'   : d => addMonths(d, 1),
+  'follow-up_3meses' : d => addMonths(d, 3),
+  'eq5_3meses'       : d => addMonths(d, 3),
+  'follow-up_6meses' : d => addMonths(d, 6),
+  'follow-up_1ano'   : d => addYears(d, 1),
+  'eq5_1ano'         : d => addYears(d, 1),
+};
+
+exports.setDischargeDate = async (req, res) => {
+  try {
+    const { patientId, followUpId } = req.params;
+    const { dischargeDate } = req.body;
+
+    if (!dischargeDate) {
+      return res.status(400).json({ message: 'dischargeDate é obrigatório' });
+    }
+
+    const followUp = await FollowUp.findById(followUpId).populate('patient');
+    if (!followUp || followUp.patient.toString() !== patientId) {
+      return res.status(404).json({ message: 'Acompanhamento não encontrado para o paciente' });
+    }
+
+    const alta = new Date(dischargeDate);
+    if (isNaN(+alta)) return res.status(400).json({ message: 'dischargeDate inválida' });
+
+    // guarda a alta
+    followUp.dischargeDate = alta;
+
+    // agenda apenas os pós-op que ainda não têm scheduledAt
+    for (const q of followUp.questionnaires) {
+      const f = q.formId;
+      if (SCHEDULE_FROM_DISCHARGE[f] && !q.scheduledAt) {
+        q.scheduledAt = SCHEDULE_FROM_DISCHARGE[f](alta);
+      }
+    }
+
+    // envia os que já estão “a horas” e ainda não foram enviados/preenchidos
+    const now = new Date();
+    const due = followUp.questionnaires.filter(q =>
+      !q.filled && q.scheduledAt && q.scheduledAt <= now && !q.sentAt
+    );
+
+    if (due.length && followUp.patient?.email) {
+      const { sendFormEmail } = require('../services/emailService');
+      const formIds = due.map(q => q.formId);
+      const slugMap = Object.fromEntries(due.map(q => [q.formId, q.slug]));
+      try {
+        await sendFormEmail(followUp.patient.email, followUp.patient._id, followUp.patient.name, formIds, slugMap);
+        due.forEach(q => { q.sentAt = new Date(); q.attempts = (q.attempts || 0) + 1; });
+      } catch (e) {
+        console.error('❌ Erro ao enviar pós-op:', e);
+      }
+    }
+
+    await followUp.save();
+    res.json(followUp);
+  } catch (err) {
+    console.error('setDischargeDate ⇢', err);
+    res.status(500).json({ message: 'Erro ao definir alta.' });
+  }
+};
