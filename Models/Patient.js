@@ -1,13 +1,6 @@
 const mongoose = require('mongoose');
 
 const patientSchema = new mongoose.Schema({
-    processNumber: {               
-    type: String,
-    required: true,
-    trim: true,
-    index: true                  // útil para pesquisas
-  },
-
   name: {
     type: String,
     required: true
