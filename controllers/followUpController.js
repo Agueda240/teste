@@ -22,7 +22,6 @@ exports.createFollowUp = async (req, res) => {
 
     const now = new Date();
 
-    // ✅ Só PRÉ-OP com data; PÓS-OP aguardam ALTA (scheduledAt = null)
     const questionnaires = [
       { formId: 'follow-up_preop', scheduledAt: now,  slug: nanoid(8) },
       { formId: 'eq5_preop',       scheduledAt: now,  slug: nanoid(8) },
@@ -77,9 +76,6 @@ exports.createFollowUp = async (req, res) => {
     res.status(400).json({ message: err.message });
   }
 };
-
-
-
 
 
 
@@ -545,18 +541,25 @@ exports.setDischargeDate = async (req, res) => {
 
     fu.dischargeDate = alta;
 
-    // agenda só os pós-op sem scheduledAt
+    // 👉 agenda apenas os pós-op ainda sem data
     for (const q of fu.questionnaires || []) {
-      const fn = SCHEDULE_FROM_DISCHARGE[q.formId];
-      if (fn && !q.scheduledAt) q.scheduledAt = fn(alta);
+      const key = String(q.formId).toLowerCase();            // normaliza
+      const fn  = SCHEDULE_FROM_DISCHARGE[key];
+      const hasDate = q.scheduledAt instanceof Date && !isNaN(+q.scheduledAt);
+      if (typeof fn === 'function' && !hasDate) {
+        q.scheduledAt = fn(alta);                             // define Date
+      }
     }
+
+    // ⚠️ garante que o Mongoose persiste alterações no array
+    fu.markModified('questionnaires');
 
     await fu.save();
 
-    // 👉 RESPONDE JÁ
+    // responde já ao cliente com tudo atualizado
     res.json(fu);
 
-    // 🔧 ENVIO EM BACKGROUND
+    // envio em background dos que já venceram
     queueMicrotask(async () => {
       try {
         const { sendFormEmail } = require('../services/emailService');
@@ -567,6 +570,7 @@ exports.setDischargeDate = async (req, res) => {
           const slugMap = Object.fromEntries(due.map(q => [q.formId, q.slug]));
           await sendFormEmail(fu.patient.email, fu.patient._id, fu.patient.name, formIds, slugMap);
           due.forEach(q => { q.sentAt = new Date(); q.attempts = (q.attempts || 0) + 1; });
+          fu.markModified('questionnaires');
           await fu.save();
         }
       } catch (e) { console.error('Pós-op async:', e); }
