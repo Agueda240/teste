@@ -30,7 +30,7 @@ exports.sendFormToPatient = async (req, res) => {
  */
 exports.createPatient = async (req, res) => {
   try {
-    const { name, dateOfBirth, gender, email, phone, doctor, surgeryDate, surgeryType, medications } = req.body;
+    const { processNumber, name, dateOfBirth, gender, email, phone, doctor, surgeryDate, surgeryType, medications } = req.body;
     if (!doctor || !surgeryDate || !surgeryType) {
       return res.status(400).json({ message: 'Campos obrigatórios em falta: médico, tipo de cirurgia ou data da cirurgia.' });
     }
@@ -38,7 +38,7 @@ exports.createPatient = async (req, res) => {
     const { sendFormEmail } = require('../services/emailService');
     const { scheduleFollowUpEmails } = require('../utils/formScheduler');
 
-    const patient = new Patient({ name, email, phone, dateOfBirth, gender, estado: 'ativo' });
+    const patient = new Patient({ processNumber, name, email, phone, dateOfBirth, gender, estado: 'ativo' });
     await patient.save();
 
     const now = new Date();
@@ -113,6 +113,7 @@ exports.getAllPatients = async (req, res) => {
       } else {
         map.set(id, {
           _id: p._id,
+          processNumber: p.processNumber,
           name: p.name,
           email: p.email,
           phone: p.phone,
@@ -158,8 +159,8 @@ exports.getPatientById = async (req, res) => {
 
 exports.updatePatient = async (req, res) => {
   try {
-    const { name, dateOfBirth, gender, email, phone } = req.body;
-    const updateData = { name, dateOfBirth, gender, email, phone };
+    const { processNumber, name, dateOfBirth, gender, email, phone } = req.body;
+    const updateData = { processNumber, name, dateOfBirth, gender, email, phone };
 
     const updated = await Patient.findByIdAndUpdate(
       req.params.id,
