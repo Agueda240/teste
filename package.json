@@ -12,6 +12,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@sendgrid/mail": "^8.1.5",
     "bcryptjs": "^2.4.3",
     "bull": "^4.16.5",
     "bull-board": "^1.7.2",
