@@ -1,29 +1,17 @@
 // services/emailService.js
-// Envio via Brevo SMTP (rápido, funciona já sem validar domínio)
+// Envio via SendGrid API (HTTP) — funciona no Railway sem bloqueios SMTP
 
-// ⚙️ Configuração SMTP Brevo
-const nodemailer = require("nodemailer");
+const sgMail = require("@sendgrid/mail");
 
-const BREVO_HOST = "smtp-relay.brevo.com";
-const BREVO_PORT = 587; // se deres erro, testa 465 com secure: true
-const BREVO_SECURE = false;
-const BREVO_USER = "962924001@smtp-brevo.com"; // o login que a Brevo deu
-const BREVO_PASS = "rDWYFqk9nZHXja1N";        // a senha mestre que a Brevo gerou
+// 🔑 Usa a tua API Key do SendGrid
+sgMail.setApiKey("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");
 
-// Remetente — tem de ser o @smtp-brevo.com enquanto não validares domínio
-const FROM = `"Hospital Santa Marta" <${BREVO_USER}>`;
+// Remetente autenticado
+const FROM = { email: "tese@tiagoagueda.pt", name: "Hospital Santa Marta" };
 
-const transporter = nodemailer.createTransport({
-  host: BREVO_HOST,
-  port: BREVO_PORT,
-  secure: BREVO_SECURE,
-  auth: { user: BREVO_USER, pass: BREVO_PASS },
-  tls: { rejectUnauthorized: false }
-});
-
-// ————————————————————————————————————————————————————————————————
-// HTML builders (mesmo design que tinhas)
-// ————————————————————————————————————————————————————————————————
+// ————————————————————————————————————————————————
+// HTML builders
+// ————————————————————————————————————————————————
 function buildFollowupHtml(patientName, formIds, slugMap) {
   const labels = {
     "follow-up_preop": "Follow-up pré-operatório",
@@ -34,7 +22,7 @@ function buildFollowupHtml(patientName, formIds, slugMap) {
     "eq5_3meses": "EQ-5D 3 meses pós-cirurgia",
     "follow-up_6meses": "Follow-up 6 meses pós-cirurgia",
     "follow-up_1ano": "Follow-up 1 ano pós-cirurgia",
-    "eq5_1ano": "EQ-5D 1 ano pós-cirurgia"
+    "eq5_1ano": "EQ-5D 1 ano pós-cirurgia",
   };
 
   const listItems = formIds
@@ -92,35 +80,37 @@ function buildPasswordHtml(name, link) {
     </div>`;
 }
 
-// ————————————————————————————————————————————————————————————————
+// ————————————————————————————————————————————————
 // Funções públicas
-// ————————————————————————————————————————————————————————————————
+// ————————————————————————————————————————————————
 async function sendFormEmail(to, patientId, patientName, formIds, slugMap) {
   const html = buildFollowupHtml(patientName, formIds, slugMap);
 
-  const info = await transporter.sendMail({
+  const msg = {
     from: FROM,
     to,
     subject: "Formulários de Follow-up Disponíveis",
-    html
-  });
+    html,
+  };
 
-  console.log("[EMAIL/BREVO SMTP] Follow-up enviado:", info.messageId);
-  return info;
+  const result = await sgMail.send(msg);
+  console.log("[EMAIL/SENDGRID] Follow-up enviado:", result[0].statusCode);
+  return result;
 }
 
 async function sendPasswordSetupEmail(to, name, link) {
   const html = buildPasswordHtml(name, link);
 
-  const info = await transporter.sendMail({
+  const msg = {
     from: FROM,
     to,
     subject: "Definir senha de acesso",
-    html
-  });
+    html,
+  };
 
-  console.log("[EMAIL/BREVO SMTP] Password setup enviado:", info.messageId);
-  return info;
+  const result = await sgMail.send(msg);
+  console.log("[EMAIL/SENDGRID] Password setup enviado:", result[0].statusCode);
+  return result;
 }
 
 module.exports = { sendFormEmail, sendPasswordSetupEmail };
