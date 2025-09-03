@@ -1,21 +1,28 @@
 // services/emailService.js
-// Envio via Brevo API oficial (sib-api-v3-sdk)
+// Envio via Brevo SMTP (rápido, funciona já sem validar domínio)
 
-const SibApiV3Sdk = require('sib-api-v3-sdk');
+// ⚙️ Configuração SMTP Brevo
+const nodemailer = require("nodemailer");
 
-// 🔑 API Key v3 da Brevo
-const BREVO_API_KEY = "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";
+const BREVO_HOST = "smtp-relay.brevo.com";
+const BREVO_PORT = 587; // se deres erro, testa 465 com secure: true
+const BREVO_SECURE = false;
+const BREVO_USER = "962924001@smtp-brevo.com"; // o login que a Brevo deu
+const BREVO_PASS = "rDWYFqk9nZHXja1N";        // a senha mestre que a Brevo gerou
 
-// Configurar cliente
-const defaultClient = SibApiV3Sdk.ApiClient.instance;
-const apiKey = defaultClient.authentications['api-key'];
-apiKey.apiKey = BREVO_API_KEY;
+// Remetente — tem de ser o @smtp-brevo.com enquanto não validares domínio
+const FROM = `"Hospital Santa Marta" <${BREVO_USER}>`;
 
-const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
+const transporter = nodemailer.createTransport({
+  host: BREVO_HOST,
+  port: BREVO_PORT,
+  secure: BREVO_SECURE,
+  auth: { user: BREVO_USER, pass: BREVO_PASS },
+  tls: { rejectUnauthorized: false }
+});
 
-// Remetente (usa o login do Brevo enquanto não verificares domínio)
-const FROM = { email: "962924001@smtp-brevo.com", name: "Hospital Santa Marta" };
-
+// ————————————————————————————————————————————————————————————————
+// HTML builders (mesmo design que tinhas)
 // ————————————————————————————————————————————————————————————————
 function buildFollowupHtml(patientName, formIds, slugMap) {
   const labels = {
@@ -27,72 +34,93 @@ function buildFollowupHtml(patientName, formIds, slugMap) {
     "eq5_3meses": "EQ-5D 3 meses pós-cirurgia",
     "follow-up_6meses": "Follow-up 6 meses pós-cirurgia",
     "follow-up_1ano": "Follow-up 1 ano pós-cirurgia",
-    "eq5_1ano": "EQ-5D 1 ano pós-cirurgia",
+    "eq5_1ano": "EQ-5D 1 ano pós-cirurgia"
   };
 
-  const listItems = formIds.map(formId => {
-    const slug = slugMap[formId];
-    const label = labels[formId] || formId;
-    const url = `https://hospital-santa-marta.tiagoagueda.pt/followup/${slug}`;
-    return `<li><a href="${url}" style="background:#007bff;color:#fff;padding:10px 14px;border-radius:4px;text-decoration:none">${label}</a></li>`;
-  }).join('');
+  const listItems = formIds
+    .map((formId) => {
+      const slug = slugMap[formId];
+      const label = labels[formId] || formId;
+      const url = `https://hospital-santa-marta.tiagoagueda.pt/followup/${slug}`;
+      return `
+        <li style="margin-bottom:12px">
+          <a href="${url}" style="text-decoration:none;color:#ffffff;background-color:#007bff;padding:10px 14px;border-radius:4px;display:inline-block">
+            ${label}
+          </a>
+        </li>`;
+    })
+    .join("");
 
   return `
-    <div style="font-family:Arial,sans-serif;max-width:600px;margin:auto">
-      <h2>Olá ${patientName || ""},</h2>
-      <p>Por favor, clique nos botões abaixo para preencher os questionários:</p>
-      <ul style="list-style:none;padding:0">${listItems}</ul>
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;border:1px solid #e0e0e0;border-radius:8px;overflow:hidden">
+      <div style="background-color:#007bff;padding:20px;color:#ffffff;text-align:center">
+        <h1 style="margin:0;font-size:24px">Hospital Santa Marta</h1>
+      </div>
+      <div style="padding:20px;background-color:#f9f9f9">
+        <p style="font-size:16px;color:#333333">Olá ${patientName || ""},</p>
+        <p style="font-size:16px;color:#333333">Por favor, clique nos botões abaixo para preencher os questionários de follow-up:</p>
+        <ul style="list-style:none;padding:0">${listItems}</ul>
+        <p style="font-size:14px;color:#555555">Caso já tenha preenchido, ignore esta mensagem.</p>
+      </div>
+      <div style="background-color:#f1f1f1;padding:12px;text-align:center;font-size:12px;color:#777777">
+        <p style="margin:0">© ${new Date().getFullYear()} Hospital Santa Marta</p>
+      </div>
     </div>`;
 }
 
 function buildPasswordHtml(name, link) {
   return `
-    <div style="font-family:Arial,sans-serif;max-width:600px;margin:auto">
-      <h2>Olá ${name || ""},</h2>
-      <p>Para definir a sua senha de acesso à plataforma, clique abaixo:</p>
-      <a href="${link}" style="background:#007bff;color:#fff;padding:10px 14px;border-radius:4px;text-decoration:none">Definir Senha</a>
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;border:1px solid #e0e0e0;border-radius:8px;overflow:hidden">
+      <div style="background-color:#007bff;padding:20px;color:#ffffff;text-align:center">
+        <h1 style="margin:0;font-size:24px">Hospital Santa Marta</h1>
+      </div>
+      <div style="padding:20px;background-color:#f9f9f9">
+        <p style="font-size:16px;color:#333333">Olá ${name || ""},</p>
+        <p style="font-size:16px;color:#333333">Para definir a sua senha de acesso à plataforma, clique no botão abaixo:</p>
+        <ul style="list-style:none;padding:0">
+          <li style="margin-bottom:12px">
+            <a href="${link}" style="text-decoration:none;color:#ffffff;background-color:#007bff;padding:10px 14px;border-radius:4px;display:inline-block">
+              Definir Senha
+            </a>
+          </li>
+        </ul>
+        <p style="font-size:14px;color:#555555">Este link é válido por 24 horas.</p>
+      </div>
+      <div style="background-color:#f1f1f1;padding:12px;text-align:center;font-size:12px;color:#777777">
+        <p style="margin:0">© ${new Date().getFullYear()} Hospital Santa Marta</p>
+      </div>
     </div>`;
 }
 
 // ————————————————————————————————————————————————————————————————
+// Funções públicas
+// ————————————————————————————————————————————————————————————————
 async function sendFormEmail(to, patientId, patientName, formIds, slugMap) {
   const html = buildFollowupHtml(patientName, formIds, slugMap);
 
-  const sendSmtpEmail = {
-    sender: FROM,
-    to: [{ email: to, name: patientName }],
+  const info = await transporter.sendMail({
+    from: FROM,
+    to,
     subject: "Formulários de Follow-up Disponíveis",
-    htmlContent: html,
-  };
+    html
+  });
 
-  try {
-    const data = await apiInstance.sendTransacEmail(sendSmtpEmail);
-    console.log("[EMAIL/BREVO API] Follow-up enviado:", data.messageId || data);
-    return data;
-  } catch (error) {
-    console.error("[EMAIL/BREVO API] Erro no envio Follow-up:", error.response?.body || error);
-    throw error;
-  }
+  console.log("[EMAIL/BREVO SMTP] Follow-up enviado:", info.messageId);
+  return info;
 }
 
 async function sendPasswordSetupEmail(to, name, link) {
   const html = buildPasswordHtml(name, link);
 
-  const sendSmtpEmail = {
-    sender: FROM,
-    to: [{ email: to, name }],
+  const info = await transporter.sendMail({
+    from: FROM,
+    to,
     subject: "Definir senha de acesso",
-    htmlContent: html,
-  };
+    html
+  });
 
-  try {
-    const data = await apiInstance.sendTransacEmail(sendSmtpEmail);
-    console.log("[EMAIL/BREVO API] Password enviado:", data.messageId || data);
-    return data;
-  } catch (error) {
-    console.error("[EMAIL/BREVO API] Erro no envio Password:", error.response?.body || error);
-    throw error;
-  }
+  console.log("[EMAIL/BREVO SMTP] Password setup enviado:", info.messageId);
+  return info;
 }
 
 module.exports = { sendFormEmail, sendPasswordSetupEmail };
