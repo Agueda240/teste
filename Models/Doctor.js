@@ -1,6 +1,6 @@
 // models/Doctor.js
 const mongoose = require('mongoose');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 
 const doctorSchema = new mongoose.Schema({
   name: {
