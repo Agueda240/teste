@@ -38,7 +38,7 @@ exports.createPatient = async (req, res) => {
     const { sendFormEmail } = require('../services/emailService');
     const { scheduleFollowUpEmails } = require('../utils/formScheduler');
 
-    const patient = new Patient({ processNumber, name, email, phone, dateOfBirth, gender, estado: 'ativo' });
+    const patient = new Patient({ processNumber, name, email, phone, dateOfBirth: dateOfBirth ? toUtcMidnight(dateOfBirth) : null, gender, estado: 'ativo' });
     await patient.save();
 
     const now = new Date();
@@ -57,7 +57,7 @@ exports.createPatient = async (req, res) => {
     const followUp = new FollowUp({
       patient: patient._id,
       doctor,
-      surgeryDate,
+      surgeryDate: toUtcMidnight(surgeryDate),
       surgeryType,
       medications: medications || [],
       questionnaires
@@ -159,9 +159,17 @@ exports.getPatientById = async (req, res) => {
 
 exports.updatePatient = async (req, res) => {
   try {
-    const { processNumber, name, dateOfBirth, gender, email, phone } = req.body;
-    const updateData = { processNumber, name, dateOfBirth, gender, email, phone };
-
+   const { processNumber, name, dateOfBirth, gender, email, phone } = req.body;
+   const updateData = {
+     processNumber,
+     name,
+     gender,
+     email,
+     phone,
+     ...(dateOfBirth !== undefined
+        ? { dateOfBirth: dateOfBirth ? toUtcMidnight(dateOfBirth) : null }
+        : {}),
+   };
     const updated = await Patient.findByIdAndUpdate(
       req.params.id,
       updateData,
