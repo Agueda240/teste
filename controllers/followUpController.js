@@ -318,31 +318,53 @@ exports.submitQuestionnaire = async (req, res) => {
 exports.sendFormToPatient = async (req, res) => {
   try {
     const { formId } = req.params;
+
+    // carregar followUp + patient
     const followUp = await req.followUp.populate('patient');
     const patient = followUp.patient;
-
-    const questionnaire = followUp.questionnaires.find(q => q.formId === formId);
-
-
-
-    if (!questionnaire) {
-      followUp.questionnaires.push({ formId });
-      await followUp.save();
-
-
-      return res.status(200).json({ message: `Formulário ${formId} enviado pela primeira vez.` });
-
-    } else {
-
-
-      return res.status(200).json({ message: `Formulário ${formId} reenviado para ${patient.email}` });
+    if (!patient?.email) {
+      return res.status(400).json({ message: 'Paciente sem e-mail.' });
     }
 
+    // obter (ou criar) o questionário
+    let q = followUp.questionnaires.find(q => q.formId === formId);
+
+    // se não existir, cria agora com slug e marca agendado para agora
+    if (!q) {
+      const { nanoid } = await import('nanoid');
+      q = {
+        formId,
+        slug: nanoid(8),
+        scheduledAt: new Date(),
+        filled: false,
+        attempts: 0,
+        answers: []
+      };
+      followUp.questionnaires.push(q);
+      // referência ao objeto real após push
+      q = followUp.questionnaires.find(x => x.formId === formId);
+    }
+
+    // montar formIds/slugMap para o serviço de e-mail
+    const formIds = [formId];
+    const slugMap = { [formId]: q.slug };
+
+    // enviar e-mail
+    const { sendFormEmail } = require('../services/emailService');
+    await sendFormEmail(patient.email, patient._id, patient.name, formIds, slugMap);
+
+    // atualizar metadados do envio
+    q.sentAt = new Date();
+    q.attempts = (q.attempts || 0) + 1;
+    await followUp.save();
+
+    return res.status(200).json({ message: `Formulário ${formId} enviado para ${patient.email}` });
   } catch (error) {
     console.error('Erro ao enviar formulário manual:', error);
     return res.status(500).json({ message: 'Erro ao enviar formulário manual.' });
   }
 };
+
 
 
 
