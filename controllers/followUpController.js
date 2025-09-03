@@ -517,7 +517,6 @@ exports.markQuestionnaireVerified = async (req, res) => {
   }
 };
 
-
 const SCHEDULE_FROM_DISCHARGE = {
   'follow-up_3dias'  : d => addDays(d, 3),
   'follow-up_1mes'   : d => addMonths(d, 1),
@@ -532,47 +531,52 @@ exports.setDischargeDate = async (req, res) => {
   try {
     const { patientId, followUpId } = req.params;
     const { dischargeDate } = req.body;
-    if (!dischargeDate) return res.status(400).json({ message: 'dischargeDate é obrigatório' });
 
-    const fu = await FollowUp.findById(followUpId).populate('patient');
-    const fuPatientId = fu?.patient?._id ? String(fu.patient._id) : String(fu?.patient);
-    if (!fu || fuPatientId !== String(patientId)) {
+    if (!dischargeDate) {
+      return res.status(400).json({ message: 'dischargeDate é obrigatório' });
+    }
+
+    const followUp = await FollowUp.findById(followUpId).populate('patient');
+    if (!followUp || followUp.patient.toString() !== patientId) {
       return res.status(404).json({ message: 'Acompanhamento não encontrado para o paciente' });
     }
 
     const alta = new Date(dischargeDate);
     if (isNaN(+alta)) return res.status(400).json({ message: 'dischargeDate inválida' });
 
-    fu.dischargeDate = alta;
+    // guarda a alta
+    followUp.dischargeDate = alta;
 
-    // agenda só os pós-op sem scheduledAt
-    for (const q of fu.questionnaires || []) {
-      const fn = SCHEDULE_FROM_DISCHARGE[q.formId];
-      if (fn && !q.scheduledAt) q.scheduledAt = fn(alta);
+    // agenda apenas os pós-op que ainda não têm scheduledAt
+    for (const q of followUp.questionnaires) {
+      const f = q.formId;
+      if (SCHEDULE_FROM_DISCHARGE[f] && !q.scheduledAt) {
+        q.scheduledAt = SCHEDULE_FROM_DISCHARGE[f](alta);
+      }
     }
 
-    await fu.save();
+    // envia os que já estão “a horas” e ainda não foram enviados/preenchidos
+    const now = new Date();
+    const due = followUp.questionnaires.filter(q =>
+      !q.filled && q.scheduledAt && q.scheduledAt <= now && !q.sentAt
+    );
 
-    // 👉 RESPONDE JÁ
-    res.json(fu);
-
-    // 🔧 ENVIO EM BACKGROUND
-    queueMicrotask(async () => {
+    if (due.length && followUp.patient?.email) {
+      const { sendFormEmail } = require('../services/emailService');
+      const formIds = due.map(q => q.formId);
+      const slugMap = Object.fromEntries(due.map(q => [q.formId, q.slug]));
       try {
-        const { sendFormEmail } = require('../services/emailService');
-        const now = new Date();
-        const due = (fu.questionnaires || []).filter(q => !q.filled && q.scheduledAt && q.scheduledAt <= now && !q.sentAt);
-        if (due.length && fu.patient?.email) {
-          const formIds = due.map(q => q.formId);
-          const slugMap = Object.fromEntries(due.map(q => [q.formId, q.slug]));
-          await sendFormEmail(fu.patient.email, fu.patient._id, fu.patient.name, formIds, slugMap);
-          due.forEach(q => { q.sentAt = new Date(); q.attempts = (q.attempts || 0) + 1; });
-          await fu.save();
-        }
-      } catch (e) { console.error('Pós-op async:', e); }
-    });
+        await sendFormEmail(followUp.patient.email, followUp.patient._id, followUp.patient.name, formIds, slugMap);
+        due.forEach(q => { q.sentAt = new Date(); q.attempts = (q.attempts || 0) + 1; });
+      } catch (e) {
+        console.error('❌ Erro ao enviar pós-op:', e);
+      }
+    }
+
+    await followUp.save();
+    res.json(followUp);
   } catch (err) {
     console.error('setDischargeDate ⇢', err);
-    return res.status(500).json({ message: 'Erro ao definir alta.' });
+    res.status(500).json({ message: 'Erro ao definir alta.' });
   }
 };
