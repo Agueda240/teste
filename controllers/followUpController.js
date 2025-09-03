@@ -1,7 +1,7 @@
 // controllers/followUpControllerfollowUpController.js
 const FollowUp = require('../Models/FollowUp');
 const Patient = require('../Models/Patient');
-const { toUtcMidnight } = require('../utils/date');
+const { toUtcNoonKeepingLisbonDay } = require('../utils/date');
 const { scheduleFollowUpEmails } = require('../utils/formScheduler');
 
 // helpers reutilizados noutros pontos (ex.: setDischargeDate)
@@ -39,7 +39,7 @@ exports.createFollowUp = async (req, res) => {
     const followUp = new FollowUp({
       patient: patientId,
       doctor:  req.user.id,
-      surgeryDate: surgeryDate ? toUtcMidnight(surgeryDate) : null,
+      surgeryDate: surgeryDate ? toUtcNoonKeepingLisbonDay(surgeryDate) : null,
       surgeryType,
       medications,
       dischargeDate: null,    // ← será preenchido no endpoint “Dar alta”
@@ -542,7 +542,7 @@ exports.setDischargeDate = async (req, res) => {
       return res.status(404).json({ message: 'Acompanhamento não encontrado para o paciente' });
     }
 
-    const alta = toUtcMidnight(dischargeDate);
+    const alta = toUtcNoonKeepingLisbonDay(dischargeDate);
     if (!Number.isFinite(+alta)) return res.status(400).json({ message: 'dischargeDate inválida' });
 
     fu.dischargeDate = alta;

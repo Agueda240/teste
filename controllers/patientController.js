@@ -2,6 +2,8 @@ require('dotenv').config();
 
 const Patient   = require('../Models/Patient');
 const FollowUp  = require('../Models/FollowUp');
+const { toUtcNoonKeepingLisbonDay } = require('../utils/date');
+
 const { nanoid } = require('nanoid');                // ✅ IMPORT CORRETO (sincrono)
 
 // (só usa se realmente precisares disto neste ficheiro)
@@ -38,7 +40,7 @@ exports.createPatient = async (req, res) => {
     const { sendFormEmail } = require('../services/emailService');
     const { scheduleFollowUpEmails } = require('../utils/formScheduler');
 
-    const patient = new Patient({ processNumber, name, email, phone, dateOfBirth: dateOfBirth ? toUtcMidnight(dateOfBirth) : null, gender, estado: 'ativo' });
+    const patient = new Patient({ processNumber, name, email, phone, dateOfBirth: dateOfBirth ? toUtcNoonKeepingLisbonDay(dateOfBirth) : null, gender, estado: 'ativo' });
     await patient.save();
 
     const now = new Date();
@@ -57,7 +59,7 @@ exports.createPatient = async (req, res) => {
     const followUp = new FollowUp({
       patient: patient._id,
       doctor,
-      surgeryDate: toUtcMidnight(surgeryDate),
+      surgeryDate: toUtcNoonKeepingLisbonDay(surgeryDate),
       surgeryType,
       medications: medications || [],
       questionnaires
@@ -167,7 +169,7 @@ exports.updatePatient = async (req, res) => {
      email,
      phone,
      ...(dateOfBirth !== undefined
-        ? { dateOfBirth: dateOfBirth ? toUtcMidnight(dateOfBirth) : null }
+        ? { dateOfBirth: dateOfBirth ? toUtcNoonKeepingLisbonDay(dateOfBirth) : null }
         : {}),
    };
     const updated = await Patient.findByIdAndUpdate(
