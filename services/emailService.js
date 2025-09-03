@@ -1,7 +1,6 @@
 // services/emailService.js
 // Envio via Brevo API HTTP (funciona mesmo em Railway/Render sem bloqueios SMTP)
 
-const fetch = require("node-fetch");
 
 // 🔑 Coloca aqui a tua API key da Brevo (não a senha SMTP!)
 // Vai a Brevo → API & Keys → Gera uma chave v3
