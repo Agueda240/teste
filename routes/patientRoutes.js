@@ -16,7 +16,7 @@ router.put('/:id', authMiddleware, patientController.updatePatient);
 router.delete('/:id', authMiddleware, patientController.deletePatient);
 
 // Arquivar paciente
-router.patch('/:id/arquivar', authMiddleware, patientController.archivePatient);
+router.patch('/patients/:id/estado', authMiddleware, patientController.updateEstado);
 
 // Reativar paciente
 router.patch('/:id/ativar', authMiddleware, patientController.activatePatient);

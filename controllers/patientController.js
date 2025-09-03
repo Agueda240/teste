@@ -211,15 +211,30 @@ exports.archivePatient = async (req, res) => {
   }
 };
 
-exports.activatePatient = async (req, res) => {
+exports.updateEstado = async (req, res) => {
   try {
-    const patient = await Patient.findById(req.params.id);
-    if (!patient) return res.status(404).json({ message: 'Paciente não encontrado' });
-    patient.estado = 'ativo';
-    await patient.save();
-    return res.json({ message: 'Paciente reativado com sucesso' });
+    const { estado } = req.body; // <-- 'ativo' | 'arquivado'
+
+    if (!['ativo', 'arquivado'].includes(estado)) {
+      return res.status(400).json({ message: "Estado inválido. Use 'ativo' ou 'arquivado'." });
+    }
+
+    const patient = await Patient.findByIdAndUpdate(
+      req.params.id,
+      { estado },
+      { new: true, runValidators: true }
+    );
+
+    if (!patient) {
+      return res.status(404).json({ message: 'Paciente não encontrado' });
+    }
+
+    return res.json({
+      message: `Paciente atualizado para estado "${estado}" com sucesso.`,
+      patient
+    });
   } catch (err) {
-    return res.status(500).json({ message: 'Erro ao reativar paciente', error: err.message });
+    return res.status(500).json({ message: 'Erro ao atualizar estado do paciente', error: err.message });
   }
 };
 
