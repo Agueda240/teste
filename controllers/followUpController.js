@@ -22,6 +22,7 @@ exports.createFollowUp = async (req, res) => {
 
     const now = new Date();
 
+    // ✅ Só PRÉ-OP com data; PÓS-OP aguardam ALTA (scheduledAt = null)
     const questionnaires = [
       { formId: 'follow-up_preop', scheduledAt: now,  slug: nanoid(8) },
       { formId: 'eq5_preop',       scheduledAt: now,  slug: nanoid(8) },
@@ -76,6 +77,9 @@ exports.createFollowUp = async (req, res) => {
     res.status(400).json({ message: err.message });
   }
 };
+
+
+
 
 
 
@@ -524,11 +528,6 @@ const SCHEDULE_FROM_DISCHARGE = {
   'eq5_1ano'         : d => addYears(d, 1),
 };
 
-const normId = s => String(s ?? '')
-  .toLowerCase()
-  .trim()
-  .replace(/,+$/g, ''); // remove vírgulas finais acidentais
-
 exports.setDischargeDate = async (req, res) => {
   try {
     const { patientId, followUpId } = req.params;
@@ -542,79 +541,35 @@ exports.setDischargeDate = async (req, res) => {
     }
 
     const alta = new Date(dischargeDate);
-    if (!Number.isFinite(+alta)) return res.status(400).json({ message: 'dischargeDate inválida' });
+    if (isNaN(+alta)) return res.status(400).json({ message: 'dischargeDate inválida' });
 
     fu.dischargeDate = alta;
 
-    // === recalcular TODOS os pós-op a partir da alta ===
-    fu.questionnaires = (fu.questionnaires || []).map((q, i) => {
-      const key = normId(q.formId);
-      const fn  = SCHEDULE_FROM_DISCHARGE[key];
+    // agenda só os pós-op sem scheduledAt
+    for (const q of fu.questionnaires || []) {
+      const fn = SCHEDULE_FROM_DISCHARGE[q.formId];
+      if (fn && !q.scheduledAt) q.scheduledAt = fn(alta);
+    }
 
-      // corrige o formId, se necessário
-      if (key !== q.formId) {
-        q.formId = key;
-        fu.markModified(`questionnaires.${i}.formId`);
-      }
+    await fu.save();
 
-      if (typeof fn === 'function') {
-        const newDate = fn(alta);
-        // só faz update se mudou mesmo (evita writes desnecessários)
-        if (!q.scheduledAt || +new Date(q.scheduledAt) !== +newDate) {
-          q.scheduledAt = newDate;
-          fu.markModified(`questionnaires.${i}.scheduledAt`);
-        }
-      }
-      return q;
-    });
+    // 👉 RESPONDE JÁ
+    res.json(fu);
 
-    // força o Mongoose a persistir o array completo se, por algum motivo, não detectou mudanças
-    fu.markModified('questionnaires');
-
-    // ⚠️ Em algumas versões, .save() em subdocs com Date pode não “pegar”.
-    // Por isso, fazemos overwrite explícito antes de devolver.
-    await FollowUp.updateOne(
-      { _id: fu._id },
-      {
-        $set: {
-          dischargeDate: fu.dischargeDate,
-          questionnaires: fu.questionnaires
-        }
-      }
-    );
-
-    // carrega fresco da BD para devolver já atualizado
-    const fresh = await FollowUp.findById(fu._id).populate('patient').lean();
-    res.json(fresh);
-
-    // === ENVIO EM BACKGROUND dos que já venceram ===
+    // 🔧 ENVIO EM BACKGROUND
     queueMicrotask(async () => {
       try {
         const { sendFormEmail } = require('../services/emailService');
         const now = new Date();
-        const due = (fresh.questionnaires || []).filter(q =>
-          !q.filled && q.scheduledAt && new Date(q.scheduledAt) <= now && !q.sentAt
-        );
-        if (due.length && fresh.patient?.email) {
+        const due = (fu.questionnaires || []).filter(q => !q.filled && q.scheduledAt && q.scheduledAt <= now && !q.sentAt);
+        if (due.length && fu.patient?.email) {
           const formIds = due.map(q => q.formId);
           const slugMap = Object.fromEntries(due.map(q => [q.formId, q.slug]));
-          await sendFormEmail(fresh.patient.email, fresh.patient._id, fresh.patient.name, formIds, slugMap);
-          await FollowUp.updateOne(
-            { _id: fresh._id },
-            {
-              $set: {
-                questionnaires: fresh.questionnaires.map(q =>
-                  due.some(d => String(d.slug) === String(q.slug))
-                    ? { ...q, sentAt: new Date(), attempts: (q.attempts || 0) + 1 }
-                    : q
-                )
-              }
-            }
-          );
+          await sendFormEmail(fu.patient.email, fu.patient._id, fu.patient.name, formIds, slugMap);
+          due.forEach(q => { q.sentAt = new Date(); q.attempts = (q.attempts || 0) + 1; });
+          await fu.save();
         }
-      } catch (e) {
-        console.error('Pós-op async:', e);
-      }
+      } catch (e) { console.error('Pós-op async:', e); }
     });
   } catch (err) {
     console.error('setDischargeDate ⇢', err);
