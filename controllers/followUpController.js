@@ -22,7 +22,6 @@ exports.createFollowUp = async (req, res) => {
 
     const now = new Date();
 
-    // ✅ Só PRÉ-OP com data; PÓS-OP aguardam ALTA (scheduledAt = null)
     const questionnaires = [
       { formId: 'follow-up_preop', scheduledAt: now,  slug: nanoid(8) },
       { formId: 'eq5_preop',       scheduledAt: now,  slug: nanoid(8) },
@@ -77,9 +76,6 @@ exports.createFollowUp = async (req, res) => {
     res.status(400).json({ message: err.message });
   }
 };
-
-
-
 
 
 
@@ -318,53 +314,31 @@ exports.submitQuestionnaire = async (req, res) => {
 exports.sendFormToPatient = async (req, res) => {
   try {
     const { formId } = req.params;
-
-    // carregar followUp + patient
     const followUp = await req.followUp.populate('patient');
     const patient = followUp.patient;
-    if (!patient?.email) {
-      return res.status(400).json({ message: 'Paciente sem e-mail.' });
+
+    const questionnaire = followUp.questionnaires.find(q => q.formId === formId);
+
+
+
+    if (!questionnaire) {
+      followUp.questionnaires.push({ formId });
+      await followUp.save();
+
+
+      return res.status(200).json({ message: `Formulário ${formId} enviado pela primeira vez.` });
+
+    } else {
+
+
+      return res.status(200).json({ message: `Formulário ${formId} reenviado para ${patient.email}` });
     }
 
-    // obter (ou criar) o questionário
-    let q = followUp.questionnaires.find(q => q.formId === formId);
-
-    // se não existir, cria agora com slug e marca agendado para agora
-    if (!q) {
-      const { nanoid } = await import('nanoid');
-      q = {
-        formId,
-        slug: nanoid(8),
-        scheduledAt: new Date(),
-        filled: false,
-        attempts: 0,
-        answers: []
-      };
-      followUp.questionnaires.push(q);
-      // referência ao objeto real após push
-      q = followUp.questionnaires.find(x => x.formId === formId);
-    }
-
-    // montar formIds/slugMap para o serviço de e-mail
-    const formIds = [formId];
-    const slugMap = { [formId]: q.slug };
-
-    // enviar e-mail
-    const { sendFormEmail } = require('../services/emailService');
-    await sendFormEmail(patient.email, patient._id, patient.name, formIds, slugMap);
-
-    // atualizar metadados do envio
-    q.sentAt = new Date();
-    q.attempts = (q.attempts || 0) + 1;
-    await followUp.save();
-
-    return res.status(200).json({ message: `Formulário ${formId} enviado para ${patient.email}` });
   } catch (error) {
     console.error('Erro ao enviar formulário manual:', error);
     return res.status(500).json({ message: 'Erro ao enviar formulário manual.' });
   }
 };
-
 
 
 
@@ -539,6 +513,7 @@ exports.markQuestionnaireVerified = async (req, res) => {
   }
 };
 
+
 const SCHEDULE_FROM_DISCHARGE = {
   'follow-up_3dias'  : d => addDays(d, 3),
   'follow-up_1mes'   : d => addMonths(d, 1),
@@ -549,56 +524,100 @@ const SCHEDULE_FROM_DISCHARGE = {
   'eq5_1ano'         : d => addYears(d, 1),
 };
 
+const normId = s => String(s ?? '')
+  .toLowerCase()
+  .trim()
+  .replace(/,+$/g, ''); // remove vírgulas finais acidentais
+
 exports.setDischargeDate = async (req, res) => {
   try {
     const { patientId, followUpId } = req.params;
     const { dischargeDate } = req.body;
+    if (!dischargeDate) return res.status(400).json({ message: 'dischargeDate é obrigatório' });
 
-    if (!dischargeDate) {
-      return res.status(400).json({ message: 'dischargeDate é obrigatório' });
-    }
-
-    const followUp = await FollowUp.findById(followUpId).populate('patient');
-    if (!followUp || followUp.patient.toString() !== patientId) {
+    const fu = await FollowUp.findById(followUpId).populate('patient');
+    const fuPatientId = fu?.patient?._id ? String(fu.patient._id) : String(fu?.patient);
+    if (!fu || fuPatientId !== String(patientId)) {
       return res.status(404).json({ message: 'Acompanhamento não encontrado para o paciente' });
     }
 
     const alta = new Date(dischargeDate);
-    if (isNaN(+alta)) return res.status(400).json({ message: 'dischargeDate inválida' });
+    if (!Number.isFinite(+alta)) return res.status(400).json({ message: 'dischargeDate inválida' });
 
-    // guarda a alta
-    followUp.dischargeDate = alta;
+    fu.dischargeDate = alta;
 
-    // agenda apenas os pós-op que ainda não têm scheduledAt
-    for (const q of followUp.questionnaires) {
-      const f = q.formId;
-      if (SCHEDULE_FROM_DISCHARGE[f] && !q.scheduledAt) {
-        q.scheduledAt = SCHEDULE_FROM_DISCHARGE[f](alta);
+    // === recalcular TODOS os pós-op a partir da alta ===
+    fu.questionnaires = (fu.questionnaires || []).map((q, i) => {
+      const key = normId(q.formId);
+      const fn  = SCHEDULE_FROM_DISCHARGE[key];
+
+      // corrige o formId, se necessário
+      if (key !== q.formId) {
+        q.formId = key;
+        fu.markModified(`questionnaires.${i}.formId`);
       }
-    }
 
-    // envia os que já estão “a horas” e ainda não foram enviados/preenchidos
-    const now = new Date();
-    const due = followUp.questionnaires.filter(q =>
-      !q.filled && q.scheduledAt && q.scheduledAt <= now && !q.sentAt
+      if (typeof fn === 'function') {
+        const newDate = fn(alta);
+        // só faz update se mudou mesmo (evita writes desnecessários)
+        if (!q.scheduledAt || +new Date(q.scheduledAt) !== +newDate) {
+          q.scheduledAt = newDate;
+          fu.markModified(`questionnaires.${i}.scheduledAt`);
+        }
+      }
+      return q;
+    });
+
+    // força o Mongoose a persistir o array completo se, por algum motivo, não detectou mudanças
+    fu.markModified('questionnaires');
+
+    // ⚠️ Em algumas versões, .save() em subdocs com Date pode não “pegar”.
+    // Por isso, fazemos overwrite explícito antes de devolver.
+    await FollowUp.updateOne(
+      { _id: fu._id },
+      {
+        $set: {
+          dischargeDate: fu.dischargeDate,
+          questionnaires: fu.questionnaires
+        }
+      }
     );
 
-    if (due.length && followUp.patient?.email) {
-      const { sendFormEmail } = require('../services/emailService');
-      const formIds = due.map(q => q.formId);
-      const slugMap = Object.fromEntries(due.map(q => [q.formId, q.slug]));
-      try {
-        await sendFormEmail(followUp.patient.email, followUp.patient._id, followUp.patient.name, formIds, slugMap);
-        due.forEach(q => { q.sentAt = new Date(); q.attempts = (q.attempts || 0) + 1; });
-      } catch (e) {
-        console.error('❌ Erro ao enviar pós-op:', e);
-      }
-    }
+    // carrega fresco da BD para devolver já atualizado
+    const fresh = await FollowUp.findById(fu._id).populate('patient').lean();
+    res.json(fresh);
 
-    await followUp.save();
-    res.json(followUp);
+    // === ENVIO EM BACKGROUND dos que já venceram ===
+    queueMicrotask(async () => {
+      try {
+        const { sendFormEmail } = require('../services/emailService');
+        const now = new Date();
+        const due = (fresh.questionnaires || []).filter(q =>
+          !q.filled && q.scheduledAt && new Date(q.scheduledAt) <= now && !q.sentAt
+        );
+        if (due.length && fresh.patient?.email) {
+          const formIds = due.map(q => q.formId);
+          const slugMap = Object.fromEntries(due.map(q => [q.formId, q.slug]));
+          await sendFormEmail(fresh.patient.email, fresh.patient._id, fresh.patient.name, formIds, slugMap);
+          await FollowUp.updateOne(
+            { _id: fresh._id },
+            {
+              $set: {
+                questionnaires: fresh.questionnaires.map(q =>
+                  due.some(d => String(d.slug) === String(q.slug))
+                    ? { ...q, sentAt: new Date(), attempts: (q.attempts || 0) + 1 }
+                    : q
+                )
+              }
+            }
+          );
+        }
+      } catch (e) {
+        console.error('Pós-op async:', e);
+      }
+    });
   } catch (err) {
     console.error('setDischargeDate ⇢', err);
-    res.status(500).json({ message: 'Erro ao definir alta.' });
+    return res.status(500).json({ message: 'Erro ao definir alta.' });
   }
 };

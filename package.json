@@ -13,6 +13,7 @@
   "description": "",
   "dependencies": {
     "@sendgrid/mail": "^8.1.5",
+    "bcrypt": "^5.1.1",
     "bcryptjs": "^2.4.3",
     "bull": "^4.16.5",
     "bull-board": "^1.7.2",
@@ -26,9 +27,7 @@
     "node-cron": "^3.0.3",
     "nodemailer": "^6.10.0",
     "passport": "^0.7.0",
-    "passport-local": "^1.0.0",
-    "resend": "^6.0.2",
-    "sib-api-v3-sdk": "^8.5.0"
+    "passport-local": "^1.0.0"
   },
   "devDependencies": {
     "@types/bull": "^3.15.9",

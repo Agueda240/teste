@@ -30,42 +30,30 @@ exports.sendFormToPatient = async (req, res) => {
  */
 exports.createPatient = async (req, res) => {
   try {
-    const { name, dateOfBirth, gender, email, phone, doctor, surgeryDate, surgeryType, medications } = req.body;
-
+    const { processNumber, name, dateOfBirth, gender, email, phone, doctor, surgeryDate, surgeryType, medications } = req.body;
     if (!doctor || !surgeryDate || !surgeryType) {
-      return res.status(400).json({
-        message: 'Campos obrigatórios em falta: médico, tipo de cirurgia ou data da cirurgia.'
-      });
+      return res.status(400).json({ message: 'Campos obrigatórios em falta: médico, tipo de cirurgia ou data da cirurgia.' });
     }
 
-    const { sendFormEmail }        = require('../services/emailService');
+    const { sendFormEmail } = require('../services/emailService');
     const { scheduleFollowUpEmails } = require('../utils/formScheduler');
 
-    // 1) cria paciente
-    const patient = new Patient({
-      name, email, phone, dateOfBirth, gender, estado: 'ativo'
-    });
+    const patient = new Patient({ processNumber, name, email, phone, dateOfBirth, gender, estado: 'ativo' });
     await patient.save();
 
     const now = new Date();
-
-    // 2) questionários
     const questionnaires = [
-      // Pré-op: com data (envio imediato)
       { formId: 'follow-up_preop', scheduledAt: now, slug: nanoid(8) },
       { formId: 'eq5_preop',       scheduledAt: now, slug: nanoid(8) },
-
-      // Pós-op: sem data até haver alta
-      { formId: 'follow-up_3dias',   scheduledAt: null, slug: nanoid(8) },
-      { formId: 'follow-up_1mes',    scheduledAt: null, slug: nanoid(8) },
-      { formId: 'follow-up_3meses',  scheduledAt: null, slug: nanoid(8) },
-      { formId: 'eq5_3meses',        scheduledAt: null, slug: nanoid(8) },
-      { formId: 'follow-up_6meses',  scheduledAt: null, slug: nanoid(8) },
-      { formId: 'follow-up_1ano',    scheduledAt: null, slug: nanoid(8) },
-      { formId: 'eq5_1ano',          scheduledAt: null, slug: nanoid(8) }
+      { formId: 'follow-up_3dias',  scheduledAt: null, slug: nanoid(8) },
+      { formId: 'follow-up_1mes',   scheduledAt: null, slug: nanoid(8) },
+      { formId: 'follow-up_3meses', scheduledAt: null, slug: nanoid(8) },
+      { formId: 'eq5_3meses',       scheduledAt: null, slug: nanoid(8) },
+      { formId: 'follow-up_6meses', scheduledAt: null, slug: nanoid(8) },
+      { formId: 'follow-up_1ano',   scheduledAt: null, slug: nanoid(8) },
+      { formId: 'eq5_1ano',         scheduledAt: null, slug: nanoid(8) },
     ];
 
-    // 3) followUp
     const followUp = new FollowUp({
       patient: patient._id,
       doctor,
@@ -74,43 +62,34 @@ exports.createPatient = async (req, res) => {
       medications: medications || [],
       questionnaires
     });
-
     await followUp.save();
 
-    // 4) envia só os que têm scheduledAt válido e são “até agora”
-    const ready = followUp.questionnaires.filter(q => {
-      if (!q.scheduledAt) return false;                   // ignora pós-op sem data
-      const s = new Date(q.scheduledAt);
-      if (Number.isNaN(+s)) return false;
-      if (s > now) return false;
-      return !q.sentAt || new Date(q.sentAt) < s;
-    });
+    // 👉 RESPONDE JÁ
+    res.status(201).json({ patient, followUp });
 
-    if (ready.length && patient.email) {
-      const formIds = ready.map(q => q.formId);
-      const slugMap = Object.fromEntries(ready.map(q => [q.formId, q.slug]));
+    // 🔧 TRABALHO EM BACKGROUND (não bloqueia a resposta)
+    queueMicrotask(async () => {
       try {
-        await sendFormEmail(patient.email, patient._id, patient.name, formIds, slugMap);
-        ready.forEach(q => {
-          q.sentAt   = new Date();
-          q.attempts = (q.attempts || 0) + 1;
-        });
-        await followUp.save();
-        console.log(`📩 Email(s) pré-operatório enviados para ${patient.email}`);
-      } catch (e) {
-        console.error('❌ Erro ao enviar pré-op:', e);
-      }
-    }
+        const ready = followUp.questionnaires.filter(q => q.scheduledAt && !q.filled && (!q.sentAt || q.sentAt < q.scheduledAt) && q.scheduledAt <= now);
+        if (ready.length && patient.email) {
+          const formIds = ready.map(q => q.formId);
+          const slugMap = Object.fromEntries(ready.map(q => [q.formId, q.slug]));
+          await sendFormEmail(patient.email, patient._id, patient.name, formIds, slugMap);
+          ready.forEach(q => { q.sentAt = new Date(); q.attempts = (q.attempts || 0) + 1; });
+          await followUp.save();
+        }
+      } catch (e) { console.error('Pré-op async:', e); }
 
-    // 5) agenda lembretes/rotinas (o scheduler deve ignorar os que não têm scheduledAt)
-    await scheduleFollowUpEmails(patient, followUp);
-
-    return res.status(201).json({ patient, followUp });
+      try {
+        await scheduleFollowUpEmails(patient, followUp);
+      } catch (e) { console.error('Scheduler async:', e); }
+    });
   } catch (err) {
     console.error('Erro ao criar paciente:', err);
     return res.status(400).json({ message: err.message });
   }
 };
+
 
 /** Lista todos os pacientes (com os respectivos followUps agregados) */
 exports.getAllPatients = async (req, res) => {
@@ -134,6 +113,7 @@ exports.getAllPatients = async (req, res) => {
       } else {
         map.set(id, {
           _id: p._id,
+          processNumber: p.processNumber,
           name: p.name,
           email: p.email,
           phone: p.phone,
@@ -179,8 +159,8 @@ exports.getPatientById = async (req, res) => {
 
 exports.updatePatient = async (req, res) => {
   try {
-    const { name, dateOfBirth, gender, email, phone } = req.body;
-    const updateData = { name, dateOfBirth, gender, email, phone };
+    const { processNumber, name, dateOfBirth, gender, email, phone } = req.body;
+    const updateData = { processNumber, name, dateOfBirth, gender, email, phone };
 
     const updated = await Patient.findByIdAndUpdate(
       req.params.id,
