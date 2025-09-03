@@ -1,21 +1,28 @@
 // services/emailService.js
-// Envio por API (Resend) — evita bloqueios SMTP e melhora entregabilidade
+// Envio via Brevo SMTP (rápido e simples)
 
-const { Resend } = require('resend');
+const nodemailer = require('nodemailer');
 
-// 🔑 COLOCA A TUA CHAVE AQUI (outra boa prática é usar variável de ambiente)
-const RESEND_API_KEY = 're_N8VMEPwv_7LPUtzKmVvuvdvJSY2FMkxsh';
+// 🔧 CREDENCIAIS BREVO (usadas enquanto não validares o teu domínio)
+const BREVO_HOST = 'smtp-relay.brevo.com';
+const BREVO_PORT = 587;                // usa 465 se quiseres SSL puro
+const BREVO_SECURE = false;            // true se mudares a porta para 465
+const BREVO_USER = '962924001@smtp-brevo.com';
+const BREVO_PASS = 'rDWYFqk9nZHXja1N'; // a “senha-mestre” que o Brevo gerou
 
-// Remetentes (escolhe um)
-// - Se já verificaste o domínio no Resend, usa o VERIFICADO.
-// - Caso contrário, usa o FALLBACK (funciona já).
-const FROM_VERIFIED = 'Hospital Santa Marta <noreply@tiagoagueda.pt>';
-const FROM_FALLBACK = 'Hospital Santa Marta <onboarding@resend.dev>';
+// “From” tem de ser @smtp-brevo.com enquanto não validares o teu domínio
+const FROM = `Hospital Santa Marta <${BREVO_USER}>`;
 
-// Usa o FALLBACK por defeito para começar a enviar já
-const FROM = FROM_FALLBACK;
-
-const resend = new Resend(RESEND_API_KEY);
+// Transportador SMTP (com pool para melhor performance)
+const transporter = nodemailer.createTransport({
+  host: BREVO_HOST,
+  port: BREVO_PORT,
+  secure: BREVO_SECURE,
+  auth: { user: BREVO_USER, pass: BREVO_PASS },
+  pool: true,
+  maxConnections: 3,
+  maxMessages: 50
+});
 
 // ————————————————————————————————————————————————————————————————
 // HTML builders (mantêm o teu design)
@@ -87,32 +94,32 @@ function buildPasswordHtml(name, link) {
 }
 
 // ————————————————————————————————————————————————————————————————
-// Funções públicas (mesma assinatura que tinhas)
+// Funções públicas (mesma assinatura que já tinhas)
 // ————————————————————————————————————————————————————————————————
 async function sendFormEmail(to, patientId, patientName, formIds, slugMap) {
   const html = buildFollowupHtml(patientName, formIds, slugMap);
 
-  const result = await resend.emails.send({
+  const info = await transporter.sendMail({
     from: FROM,
     to,
     subject: 'Formulários de Follow-up Disponíveis',
     html
   });
 
-  console.log('[EMAIL/API] Follow-up enviado:', result?.id || result);
+  console.log('[EMAIL/BREVO] Follow-up enviado:', info.messageId);
 }
 
 async function sendPasswordSetupEmail(to, name, link) {
   const html = buildPasswordHtml(name, link);
 
-  const result = await resend.emails.send({
+  const info = await transporter.sendMail({
     from: FROM,
     to,
     subject: 'Definir senha de acesso',
     html
   });
 
-  console.log('[EMAIL/API] Password setup enviado:', result?.id || result);
+  console.log('[EMAIL/BREVO] Password setup enviado:', info.messageId);
 }
 
 module.exports = { sendFormEmail, sendPasswordSetupEmail };
