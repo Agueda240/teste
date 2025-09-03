@@ -1,35 +1,19 @@
-require('dotenv').config();
-
-const Patient   = require('../Models/Patient');
-const FollowUp  = require('../Models/FollowUp');
+// controllers/patientController.js
+// Ajusta 'Models' vs 'models' conforme o teu diretório real
+const Patient  = require('../Models/Patient');
+const FollowUp = require('../Models/FollowUp');
 const { toUtcNoonKeepingLisbonDay } = require('../utils/date');
+const { nanoid } = require('nanoid');
 
-const { nanoid } = require('nanoid');                // ✅ IMPORT CORRETO (sincrono)
-
-// (só usa se realmente precisares disto neste ficheiro)
-// const cron = require('node-cron');
-// const nodemailer = require('nodemailer');
-
-// Utilidades de data
-function addDays(date, days)   { const d = new Date(date); d.setDate(d.getDate() + days); return d; }
-function addMonths(date, m)    { const d = new Date(date); d.setMonth(d.getMonth() + m);  return d; }
-function addYears(date, y)     { const d = new Date(date); d.setFullYear(d.getFullYear() + y); return d; }
-
-/** Enviar (manual) um formulário a um paciente */
 exports.sendFormToPatient = async (req, res) => {
   try {
     const { patientId, formId } = req.params;
-    // a tua lógica de envio vai aqui
     return res.status(200).json({ message: `Formulário ${formId} enviado para o paciente ${patientId}` });
   } catch (error) {
     return res.status(500).json({ message: 'Erro ao enviar formulário.', error: error.message });
   }
 };
 
-/** Criar paciente + followUp inicial
- *  Pré-op: scheduledAt = agora (envia já)
- *  Pós-op: scheduledAt = null (fica à espera da alta)
- */
 exports.createPatient = async (req, res) => {
   try {
     const { processNumber, name, dateOfBirth, gender, email, phone, doctor, surgeryDate, surgeryType, medications } = req.body;
@@ -40,7 +24,11 @@ exports.createPatient = async (req, res) => {
     const { sendFormEmail } = require('../services/emailService');
     const { scheduleFollowUpEmails } = require('../utils/formScheduler');
 
-    const patient = new Patient({ processNumber, name, email, phone, dateOfBirth: dateOfBirth ? toUtcNoonKeepingLisbonDay(dateOfBirth) : null, gender, estado: 'ativo' });
+    const patient = new Patient({
+      processNumber, name, email, phone,
+      dateOfBirth: dateOfBirth ? toUtcNoonKeepingLisbonDay(dateOfBirth) : null,
+      gender, estado: 'ativo'
+    });
     await patient.save();
 
     const now = new Date();
@@ -66,13 +54,13 @@ exports.createPatient = async (req, res) => {
     });
     await followUp.save();
 
-    // 👉 RESPONDE JÁ
     res.status(201).json({ patient, followUp });
 
-    // 🔧 TRABALHO EM BACKGROUND (não bloqueia a resposta)
     queueMicrotask(async () => {
       try {
-        const ready = followUp.questionnaires.filter(q => q.scheduledAt && !q.filled && (!q.sentAt || q.sentAt < q.scheduledAt) && q.scheduledAt <= now);
+        const ready = followUp.questionnaires.filter(q =>
+          q.scheduledAt && !q.filled && (!q.sentAt || q.sentAt < q.scheduledAt) && q.scheduledAt <= now
+        );
         if (ready.length && patient.email) {
           const formIds = ready.map(q => q.formId);
           const slugMap = Object.fromEntries(ready.map(q => [q.formId, q.slug]));
@@ -82,9 +70,8 @@ exports.createPatient = async (req, res) => {
         }
       } catch (e) { console.error('Pré-op async:', e); }
 
-      try {
-        await scheduleFollowUpEmails(patient, followUp);
-      } catch (e) { console.error('Scheduler async:', e); }
+      try { await scheduleFollowUpEmails(patient, followUp); }
+      catch (e) { console.error('Scheduler async:', e); }
     });
   } catch (err) {
     console.error('Erro ao criar paciente:', err);
@@ -92,8 +79,6 @@ exports.createPatient = async (req, res) => {
   }
 };
 
-
-/** Lista todos os pacientes (com os respectivos followUps agregados) */
 exports.getAllPatients = async (req, res) => {
   try {
     const { estado } = req.query;
@@ -138,7 +123,6 @@ exports.getAllPatients = async (req, res) => {
   }
 };
 
-// Auxiliar: remove o campo .patient de cada followUp “lean”
 function stripPatientFromFollowUp(followUp) {
   const { patient, ...rest } = followUp;
   return rest;
@@ -161,17 +145,13 @@ exports.getPatientById = async (req, res) => {
 
 exports.updatePatient = async (req, res) => {
   try {
-   const { processNumber, name, dateOfBirth, gender, email, phone } = req.body;
-   const updateData = {
-     processNumber,
-     name,
-     gender,
-     email,
-     phone,
-     ...(dateOfBirth !== undefined
+    const { processNumber, name, dateOfBirth, gender, email, phone } = req.body;
+    const updateData = {
+      processNumber, name, gender, email, phone,
+      ...(dateOfBirth !== undefined
         ? { dateOfBirth: dateOfBirth ? toUtcNoonKeepingLisbonDay(dateOfBirth) : null }
         : {}),
-   };
+    };
     const updated = await Patient.findByIdAndUpdate(
       req.params.id,
       updateData,
@@ -199,22 +179,9 @@ exports.deletePatient = async (req, res) => {
   }
 };
 
-exports.archivePatient = async (req, res) => {
-  try {
-    const patient = await Patient.findById(req.params.id);
-    if (!patient) return res.status(404).json({ message: 'Paciente não encontrado' });
-    patient.estado = 'arquivado';
-    await patient.save();
-    return res.json({ message: 'Paciente arquivado com sucesso' });
-  } catch (err) {
-    return res.status(500).json({ message: 'Erro ao arquivar paciente', error: err.message });
-  }
-};
-
 exports.updateEstado = async (req, res) => {
   try {
-    const { estado } = req.body; // <-- 'ativo' | 'arquivado'
-
+    const { estado } = req.body; // 'ativo' | 'arquivado'
     if (!['ativo', 'arquivado'].includes(estado)) {
       return res.status(400).json({ message: "Estado inválido. Use 'ativo' ou 'arquivado'." });
     }
@@ -224,17 +191,23 @@ exports.updateEstado = async (req, res) => {
       { estado },
       { new: true, runValidators: true }
     );
+    if (!patient) return res.status(404).json({ message: 'Paciente não encontrado' });
 
-    if (!patient) {
-      return res.status(404).json({ message: 'Paciente não encontrado' });
-    }
-
-    return res.json({
-      message: `Paciente atualizado para estado "${estado}" com sucesso.`,
-      patient
-    });
+    res.json({ message: `Paciente atualizado para "${estado}"`, patient });
   } catch (err) {
-    return res.status(500).json({ message: 'Erro ao atualizar estado do paciente', error: err.message });
+    res.status(500).json({ message: 'Erro ao atualizar estado do paciente', error: err.message });
+  }
+};
+
+exports.activatePatient = async (req, res) => {
+  try {
+    const patient = await Patient.findById(req.params.id);
+    if (!patient) return res.status(404).json({ message: 'Paciente não encontrado' });
+    patient.estado = 'ativo';
+    await patient.save();
+    return res.json({ message: 'Paciente reativado com sucesso' });
+  } catch (err) {
+    return res.status(500).json({ message: 'Erro ao reativar paciente', error: err.message });
   }
 };
 
