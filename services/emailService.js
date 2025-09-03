@@ -4,7 +4,7 @@
 
 // 🔑 Coloca aqui a tua API key da Brevo (não a senha SMTP!)
 // Vai a Brevo → API & Keys → Gera uma chave v3
-const BREVO_API_KEY = "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";
+const BREVO_API_KEY = "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";
 
 // “From” pode ser qualquer remetente validado na Brevo
 // enquanto não verificares domínio, usa o e-mail do login Brevo
