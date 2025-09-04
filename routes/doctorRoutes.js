@@ -7,6 +7,7 @@ const authMiddleware = require('../middleware/authMiddleware');
 // Registro e login públicos para médicos
 router.post('/register', doctorController.registerDoctor);
 router.post('/login', doctorController.loginDoctor);
+router.post('/forgot-password', doctorController.forgotPassword);
 
 // Rotas protegidas para o médico autenticado
 router.get('/profile', authMiddleware, doctorController.getDoctorProfile);
