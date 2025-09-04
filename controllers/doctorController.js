@@ -162,3 +162,28 @@ const doctors = await Doctor.find();    res.status(200).json(doctors);
     res.status(500).json({ message: err.message });
   }
 };
+
+exports.forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ message: 'Email é obrigatório.' });
+
+    const doctor = await Doctor.findOne({ email });
+    if (!doctor) {
+      // Resposta uniforme para não revelar existência de contas
+      return res.status(200).json({ message: 'Se o email existir, foi enviado um link.' });
+    }
+
+    const token = jwt.sign({ id: doctor._id }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    const link = `https://hospital-santa-marta.tiagoagueda.pt/definir-senha/${token}`;
+
+    // Podes reutilizar o mesmo template do “setup”:
+    await sendPasswordSetupEmail(email, doctor.name, link);
+    // …ou ter um específico, ex.: sendPasswordResetEmail(email, doctor.name, link)
+
+    return res.status(200).json({ message: 'Se o email existir, foi enviado um link.' });
+  } catch (err) {
+    console.error('Erro no pedido de recuperação:', err);
+    return res.status(500).json({ message: 'Erro a processar pedido.' });
+  }
+};
