@@ -254,30 +254,26 @@ function pickFollowUpsByScope(followUps = [], scope = 'active') {
 
 exports.remindManualAll = async (req, res) => {
   try {
-    const { id: patientId } = req.params;
+    // ✅ usar o nome certo do parâmetro
+    const { patientId } = req.params;
+
     const includeExpired = req.body?.includeExpired !== false; // default = true
     const scope = req.body?.scope || 'active';
 
     const patient = await Patient.findById(patientId);
-    if (!patient) {
-      return res.status(404).json({ error: 'Paciente não encontrado' });
-    }
-    if (!patient.email) {
-      return res.status(400).json({ error: 'Paciente não tem e-mail' });
-    }
+    if (!patient) return res.status(404).json({ error: 'Paciente não encontrado' });
+    if (!patient.email) return res.status(400).json({ error: 'Paciente não tem e-mail' });
 
-    // carregar followUps associados
     const followUps = await FollowUp.find({ patient: patientId }).lean();
-    patient.followUps = followUps;
-
-    const now = Date.now();
     const selectedFollowUps = pickFollowUpsByScope(followUps, scope);
 
+    const now = Date.now();
     const pending = [];
+
     for (const fu of selectedFollowUps) {
       for (const q of fu.questionnaires || []) {
-        if (q.filled) continue;              // já respondido
-        if (!isDue(q, now)) continue;        // só os devidos até hoje
+        if (q.filled) continue;
+        if (!isDue(q, now)) continue;
         if (!includeExpired && isExpired(q, now)) continue;
 
         const dueAt = baseDate(q)?.getTime() || 0;
@@ -289,23 +285,18 @@ exports.remindManualAll = async (req, res) => {
       return res.json({ sent: false, count: 0, formIds: [] });
     }
 
-    // deduplicar por formId (fica só o mais recente)
+    // deduplicar por formId (fica o mais recente)
     const latestByFormId = new Map();
     for (const item of pending) {
       const prev = latestByFormId.get(item.formId);
-      if (!prev || item.dueAt > prev.dueAt) {
-        latestByFormId.set(item.formId, item);
-      }
+      if (!prev || item.dueAt > prev.dueAt) latestByFormId.set(item.formId, item);
     }
 
     const deduped = Array.from(latestByFormId.values());
     const formIds = deduped.map(i => i.formId);
-    const slugMap = deduped.reduce((acc, i) => {
-      acc[i.formId] = i.slug;
-      return acc;
-    }, {});
+    const slugMap = deduped.reduce((acc, i) => (acc[i.formId] = i.slug, acc), {});
 
-    // envia email com todos os forms
+    // Envio manual: não mexe em attempts/sentAt
     await sendFormEmail(patient.email, patient._id, patient.name, formIds, slugMap);
 
     return res.json({ sent: true, count: formIds.length, formIds });
