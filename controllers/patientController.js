@@ -4,6 +4,7 @@ const Patient  = require('../Models/Patient');
 const FollowUp = require('../Models/FollowUp');
 const { toUtcNoonKeepingLisbonDay } = require('../utils/date');
 const { nanoid } = require('nanoid');
+const { isDue, isExpired, baseDate } = require('../utils/followup-utils');
 
 exports.sendFormToPatient = async (req, res) => {
   try {
@@ -253,24 +254,30 @@ function pickFollowUpsByScope(followUps = [], scope = 'active') {
 
 exports.remindManualAll = async (req, res) => {
   try {
-    const { patientId } = req.params;
-    const includeExpired = req.body?.includeExpired !== false; // default: true
+    const { id: patientId } = req.params;
+    const includeExpired = req.body?.includeExpired !== false; // default = true
     const scope = req.body?.scope || 'active';
 
-    const patient = await Patient.findById(patientId).lean();
-    if (!patient) return res.status(404).json({ error: 'Paciente não encontrado' });
-    if (!patient.email) return res.status(400).json({ error: 'Paciente não tem e-mail' });
+    const patient = await Patient.findById(patientId);
+    if (!patient) {
+      return res.status(404).json({ error: 'Paciente não encontrado' });
+    }
+    if (!patient.email) {
+      return res.status(400).json({ error: 'Paciente não tem e-mail' });
+    }
 
-    // carregar follow-ups do paciente
+    // carregar followUps associados
     const followUps = await FollowUp.find({ patient: patientId }).lean();
-    const selectedFollowUps = pickFollowUpsByScope(followUps, scope);
+    patient.followUps = followUps;
 
     const now = Date.now();
+    const selectedFollowUps = pickFollowUpsByScope(followUps, scope);
+
     const pending = [];
     for (const fu of selectedFollowUps) {
       for (const q of fu.questionnaires || []) {
-        if (q.filled) continue;
-        if (!isDue(q, now)) continue;
+        if (q.filled) continue;              // já respondido
+        if (!isDue(q, now)) continue;        // só os devidos até hoje
         if (!includeExpired && isExpired(q, now)) continue;
 
         const dueAt = baseDate(q)?.getTime() || 0;
@@ -282,18 +289,23 @@ exports.remindManualAll = async (req, res) => {
       return res.json({ sent: false, count: 0, formIds: [] });
     }
 
-    // dedupe por formId, ficando com o mais “recente”
+    // deduplicar por formId (fica só o mais recente)
     const latestByFormId = new Map();
-    for (const it of pending) {
-      const prev = latestByFormId.get(it.formId);
-      if (!prev || it.dueAt > prev.dueAt) latestByFormId.set(it.formId, it);
+    for (const item of pending) {
+      const prev = latestByFormId.get(item.formId);
+      if (!prev || item.dueAt > prev.dueAt) {
+        latestByFormId.set(item.formId, item);
+      }
     }
 
-    const list = Array.from(latestByFormId.values());
-    const formIds = list.map(i => i.formId);
-    const slugMap  = Object.fromEntries(list.map(i => [i.formId, i.slug]));
+    const deduped = Array.from(latestByFormId.values());
+    const formIds = deduped.map(i => i.formId);
+    const slugMap = deduped.reduce((acc, i) => {
+      acc[i.formId] = i.slug;
+      return acc;
+    }, {});
 
-    // envio “neutro”: não mexe em attempts/sentAt
+    // envia email com todos os forms
     await sendFormEmail(patient.email, patient._id, patient.name, formIds, slugMap);
 
     return res.json({ sent: true, count: formIds.length, formIds });
