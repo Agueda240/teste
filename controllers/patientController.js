@@ -6,6 +6,9 @@ const { toUtcNoonKeepingLisbonDay } = require('../utils/date');
 const { nanoid } = require('nanoid');
 const { isDue, isExpired, baseDate } = require('../utils/followup-utils');
 
+// 👇 adicionar esta linha
+const { sendFormEmail } = require('../services/emailService');
+
 exports.sendFormToPatient = async (req, res) => {
   try {
     const { patientId, formId } = req.params;
