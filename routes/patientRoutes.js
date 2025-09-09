@@ -19,6 +19,12 @@ router.patch('/:id/estado', authMiddleware, patientController.updateEstado);
 // (Opcional, se mantiveres compat): reativar específico
 router.patch('/:id/ativar', authMiddleware, patientController.activatePatient);
 
+router.post(
+  '/patients/:pid/remind-manual-all',
+  authMiddleware, 
+  patientController.remindManualAll
+);
+
 // Enviar formulário manualmente
 router.post('/:patientId/send-form/:formId', authMiddleware, patientController.sendFormToPatient);
 

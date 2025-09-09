@@ -13,12 +13,23 @@ mongoose.connect(process.env.MONGO_URI)
     process.exit(1);
   });
 
-async function main() {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  console.log(`📅 Data de hoje: ${today.toISOString()}`);
+/** Janela de hoje em UTC [00:00, 23:59:59.999] */
+function todayWindowUTC(now = new Date()) {
+  const start = new Date(Date.UTC(
+    now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0
+  ));
+  const end = new Date(Date.UTC(
+    now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 23, 59, 59, 999
+  ));
+  return { start, end };
+}
 
-  const followUps = await FollowUp.find().populate('patient');
+async function main() {
+  const { start: startUTC, end: endUTC } = todayWindowUTC();
+  console.log(`📅 Janela de hoje (UTC): ${startUTC.toISOString()} → ${endUTC.toISOString()}`);
+
+  // Apenas follow-ups ativos
+  const followUps = await FollowUp.find({ status: 'ativo' }).populate('patient');
   console.log(`🔍 Total de follow-ups encontrados: ${followUps.length}`);
 
   for (const followUp of followUps) {
@@ -28,52 +39,64 @@ async function main() {
       continue;
     }
 
-    const todayForms = (followUp.questionnaires || []).filter(q =>
-      !q.filled &&
-      q.scheduledAt &&
-      new Date(q.scheduledAt) <= today &&
-      (!q.sentAt || !sameDay(new Date(q.sentAt), today)) &&
-      (q.attempts || 0) < 4
-    );
+    // === LÓGICA CORRIGIDA: devidos ATÉ HOJE e nunca enviados hoje ===
+    const todayForms = (followUp.questionnaires || []).filter(q => {
+      if (!q) return false;
+      if (q.filled === true) return false;
+      if (!q.scheduledAt) return false;
 
-    console.log(`👤 ${patient.name} | ${patient.email} ⇢ ${todayForms.length} formulários para enviar hoje.`);
+      const sched = new Date(q.scheduledAt);
+      const devidoAteHoje = sched <= endUTC;
 
-    if (todayForms.length > 0) {
-      const formIds = todayForms.map(q => q.formId);
-      const slugMap = Object.fromEntries(todayForms.map(q => [q.formId, q.slug]));
+      const sent = q.sentAt ? new Date(q.sentAt) : null;
+      const podeReenviarHoje = !sent || sent < startUTC;
 
-      try {
-        await sendFormEmail(patient.email, patient._id, patient.name, formIds, slugMap);
-        console.log(`✅ Email enviado para ${patient.email} com os formulários: ${formIds.join(', ')}`);
-      } catch (e) {
-        console.error(`❌ Falha ao enviar email para ${patient.email}:`, e);
-        continue;
+      const tentativasOK = (q.attempts || 0) < 4;
+      const naoExpirado = q.estado ? q.estado !== 'expirado' : true;
+
+      return devidoAteHoje && podeReenviarHoje && tentativasOK && naoExpirado;
+    });
+
+    console.log(`👤 ${patient.name} | ${patient.email} ⇢ ${todayForms.length} formulário(s) para enviar hoje.`);
+
+    if (todayForms.length === 0) continue;
+
+    const formIds = todayForms.map(q => q.formId);
+    const slugMap = Object.fromEntries(todayForms.map(q => [q.formId, q.slug]));
+
+    try {
+      await sendFormEmail(patient.email, patient._id, patient.name, formIds, slugMap);
+      console.log(`✅ Email enviado para ${patient.email} com os formulários: ${formIds.join(', ')}`);
+    } catch (e) {
+      console.error(`❌ Falha ao enviar email para ${patient.email}:`, e);
+      continue; // não marca como enviado se o envio falhar
+    }
+
+    // Marca envio (sentAt=agora, updatedAt=agora, attempts++)
+    const now = new Date();
+    for (const q of followUp.questionnaires) {
+      if (!q || !q.scheduledAt) continue;
+
+      const sched = new Date(q.scheduledAt);
+      const devidoAteHoje = sched <= endUTC;
+
+      if (devidoAteHoje && formIds.includes(q.formId)) {
+        q.sentAt = now;
+        q.updatedAt = now;
+        q.attempts = (q.attempts || 0) + 1;
       }
+    }
 
-      for (const q of followUp.questionnaires) {
-        if (
-          formIds.includes(q.formId) &&
-          new Date(q.scheduledAt) <= today
-        ) {
-          q.sentAt = new Date();
-          q.attempts = (q.attempts || 0) + 1;
-        }
-      }
+    try {
       await followUp.save();
+    } catch (e) {
+      console.error(`⚠️ Falha ao persistir estado pós-envio para followUp ${followUp._id}:`, e);
     }
   }
 
   await mongoose.disconnect();
   console.log('🔌 Ligação à base de dados encerrada');
   console.log('🏁 Fim do script sendDailyFollowUps.js');
-}
-
-function sameDay(a, b) {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  );
 }
 
 main().catch(e => {
