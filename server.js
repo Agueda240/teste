@@ -46,6 +46,8 @@ app.use('/api/doctors', doctorRoutes);
 app.use('/api/patients', patientRoutes);
 app.use('/api/followups', followUpRoutes);
 
+const swagger = require('./swagger');
+swagger(app);
 
 
 // Conectar ao MongoDB
