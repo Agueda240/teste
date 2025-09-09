@@ -240,20 +240,17 @@ exports.getAllSurgeryTypes = async (req, res) => {
 
 function pickFollowUpsByScope(followUps = [], scope = 'active') {
   if (!followUps.length) return [];
-
   if (scope === 'all') return followUps;
 
   const mostRecent = [...followUps].sort(
-    (a, b) => new Date(b.surgeryDate).getTime() - new Date(a.surgeryDate).getTime()
+    (a,b) => new Date(b.surgeryDate) - new Date(a.surgeryDate)
   )[0];
 
   if (scope === 'latest') return [mostRecent];
 
-  // scope === 'active' (default)
   const active = followUps.find(f => (f.status || '').toLowerCase() === 'ativo');
   return [active || mostRecent];
 }
-
 
 exports.remindManualAll = async (req, res) => {
   try {
@@ -261,7 +258,20 @@ exports.remindManualAll = async (req, res) => {
     const includeExpired = req.body?.includeExpired !== false; // default: true
     const scope = req.body?.scope || 'active';
 
-    const patient = await Patient.findById(patientId).lean(false); // sem .lean para ter subdocs JS
+    // validação rápida do ObjectId
+    if (!mongoose.isValidObjectId(patientId)) {
+      return res.status(400).json({ error: 'patientId inválido' });
+    }
+
+    // 1) tenta buscar o Patient
+    let patient = await Patient.findById(patientId).lean();
+
+    // 2) fallback: puxa um FollowUp e popula o patient
+    if (!patient) {
+      const fuAny = await FollowUp.findOne({ patient: patientId }).populate('patient').lean();
+      if (fuAny && fuAny.patient) patient = fuAny.patient;
+    }
+
     if (!patient) {
       return res.status(404).json({ error: 'Paciente não encontrado' });
     }
@@ -269,19 +279,21 @@ exports.remindManualAll = async (req, res) => {
       return res.status(400).json({ error: 'Paciente não tem e-mail' });
     }
 
+    // busca todos os followups do paciente
+    const followUps = await FollowUp.find({ patient: patientId }).lean();
+    if (!followUps.length) {
+      return res.status(404).json({ error: 'Paciente sem follow-ups' });
+    }
+
+    const selected = pickFollowUpsByScope(followUps, scope);
+
     const now = Date.now();
-    const selectedFollowUps = pickFollowUpsByScope(patient.followUps || [], scope);
-
-    // Para cada followUp selecionado, recolher questionários “por preencher até hoje”
     const pending = [];
-    for (const fu of selectedFollowUps) {
-      const qs = fu.questionnaires || [];
-      for (const q of qs) {
-        if (q.filled) continue;              // já preenchido → não entra
-        if (!isDue(q, now)) continue;        // só os devidos até hoje
-        if (!includeExpired && isExpired(q, now)) continue; // excluir expirados se pedido
-
-        // guardar: { formId, slug, dueAt } (dueAt só para desempate/dedup)
+    for (const fu of selected) {
+      for (const q of (fu.questionnaires || [])) {
+        if (q.filled) continue;
+        if (!isDue(q, now)) continue;
+        if (!includeExpired && isExpired(q, now)) continue;
         const dueAt = baseDate(q)?.getTime() || 0;
         pending.push({ formId: q.formId, slug: q.slug, dueAt });
       }
@@ -291,24 +303,18 @@ exports.remindManualAll = async (req, res) => {
       return res.json({ sent: false, count: 0, formIds: [] });
     }
 
-    // Evitar duplicados por formId (se scope 'all' puder listar 2 FU com o mesmo formId)
-    // Mantemos o mais recente (maior dueAt)
+    // dedupe por formId (fica o mais recente)
     const latestByFormId = new Map();
-    for (const item of pending) {
-      const prev = latestByFormId.get(item.formId);
-      if (!prev || item.dueAt > prev.dueAt) {
-        latestByFormId.set(item.formId, item);
-      }
+    for (const it of pending) {
+      const prev = latestByFormId.get(it.formId);
+      if (!prev || it.dueAt > prev.dueAt) latestByFormId.set(it.formId, it);
     }
 
-    const deduped = Array.from(latestByFormId.values());
+    const deduped = [...latestByFormId.values()];
     const formIds = deduped.map(i => i.formId);
-    const slugMap = deduped.reduce((acc, i) => {
-      acc[i.formId] = i.slug;
-      return acc;
-    }, {});
+    const slugMap = deduped.reduce((acc,i)=> (acc[i.formId]=i.slug, acc), {});
 
-    // Envio manual: NÃO alterar attempts/sentAt (envio “neutro”)
+    // envio neutro: não mexe em attempts/sentAt
     await sendFormEmail(patient.email, patient._id, patient.name, formIds, slugMap);
 
     return res.json({ sent: true, count: formIds.length, formIds });
