@@ -20,8 +20,8 @@ router.patch('/:id/estado', authMiddleware, patientController.updateEstado);
 router.patch('/:id/ativar', authMiddleware, patientController.activatePatient);
 
 router.post(
-  '/:id/remind-manual-all',
-  authMiddleware, 
+  '/:patientId/remind-manual-all',
+  authMiddleware,
   patientController.remindManualAll
 );
 
